@@ -1,0 +1,37 @@
+[package]
+name = "aram-mayhem-helper"
+version = "0.1.0"
+description = "英雄联盟海克斯大乱斗出装助手"
+authors = ["chenhang"]
+edition = "2024"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "aram_mayhem_helper_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# LCU 凭证发现（进程扫描 / lockfile / 日志三路）+ HTTPS 客户端
+league-link = "0.4"
+sysinfo = "0.39"
+tokio = { version = "1", features = ["time", "rt", "macros", "sync"] }
+# 只为了在签名里使用 league_link 已经建好的 reqwest 客户端类型
+reqwest = { version = "0.13", default-features = false }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
