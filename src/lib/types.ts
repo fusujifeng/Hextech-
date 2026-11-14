@@ -31,8 +31,12 @@ export interface AugmentView {
   icon: string;
   /** 1 = 白银, 2 = 黄金, 3 = 棱彩 */
   quality: number;
-  tier: string;
-  winRate: number;
+  /** OP.GG 强度分（100 ≈ 该模式平均），无数据为 null */
+  performance: number | null;
+  /** OP.GG 选用率（百分比） */
+  popular: number | null;
+  /** 名次，从 1 开始 */
+  rank: number;
   desc: string;
 }
 

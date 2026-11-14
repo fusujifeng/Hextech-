@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { ItemSlot } from "./ItemSlot";
-import { pct, QUALITY_LABEL, type AugmentView, type Recommendation } from "../lib/types";
+import { QUALITY_LABEL, type AugmentView, type Recommendation } from "../lib/types";
 
-function Label({ children }: { children: React.ReactNode }) {
+function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
-    <div className="mb-1.5 flex items-center gap-1.5">
+    <div className="mb-1.5 flex items-baseline gap-1.5">
       <span className="h-[10px] w-[2px] rounded-full bg-gold-400/70" />
       <span className="text-[11px] tracking-[0.18em] text-white/45">{children}</span>
+      {hint && <span className="text-[9.5px] tracking-normal text-white/25">{hint}</span>}
     </div>
   );
 }
@@ -26,8 +27,24 @@ const QUALITY_TEXT: Record<number, string> = {
 function AugmentSlot({ augment }: { augment: AugmentView }) {
   const [broken, setBroken] = useState(false);
 
+  const tip = [
+    augment.desc,
+    augment.popular != null ? `选用率 ${augment.popular}%` : "",
+    augment.performance != null ? `OP.GG 强度 ${augment.performance}` : "",
+    QUALITY_LABEL[augment.quality] ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const score =
+    augment.performance != null
+      ? augment.performance.toFixed(1)
+      : augment.popular != null
+        ? `${augment.popular}%`
+        : "";
+
   return (
-    <div className="group flex w-full flex-col items-center gap-1" title={augment.desc}>
+    <div className="group flex w-full flex-col items-center gap-1" title={tip}>
       <div
         className={`relative h-[56px] w-[56px] overflow-hidden rounded-lg border-2 bg-black/50 shadow-[0_2px_10px_rgba(0,0,0,0.5)] transition group-hover:-translate-y-0.5 ${
           QUALITY_RING[augment.quality] ?? "border-white/20"
@@ -47,15 +64,15 @@ function AugmentSlot({ augment }: { augment: AugmentView }) {
             onError={() => setBroken(true)}
           />
         )}
-        <span className="absolute inset-x-0 bottom-0 bg-black/70 py-[1px] text-center text-[8.5px] text-white/70">
-          {QUALITY_LABEL[augment.quality] ?? ""}
+        <span className="absolute left-0 top-0 rounded-br-md bg-black/80 px-1 text-[9px] font-semibold text-gold-300">
+          {augment.rank}
         </span>
       </div>
       <span className="line-clamp-2 h-[24px] w-full text-center text-[10px] leading-[1.2] text-white/65">
         {augment.name}
       </span>
       <span className={`text-[9px] tabular-nums ${QUALITY_TEXT[augment.quality] ?? "text-white/40"}`}>
-        {pct(augment.winRate)}
+        {score}
       </span>
     </div>
   );
@@ -98,8 +115,8 @@ export function BuildSections({ rec }: { rec: Recommendation }) {
 
       {rec.augments.length > 0 && (
         <section>
-          <Label>推荐海克斯强化</Label>
-          <div className="grid grid-cols-6 gap-1.5">
+          <Label hint="OP.GG 强度从高到低">推荐海克斯强化</Label>
+          <div className="grid grid-cols-4 gap-2">
             {rec.augments.map((augment) => (
               <AugmentSlot key={augment.id} augment={augment} />
             ))}

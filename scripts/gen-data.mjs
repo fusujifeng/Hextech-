@@ -17,7 +17,7 @@
  *   node scripts/gen-data.mjs --version 16.22
  *   node scripts/gen-data.mjs --refresh        # 忽略本地缓存
  */
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,9 @@ const ICON_DIR = resolve(root, "public/icons");
 
 const API = "https://www.resg.top/api/v1";
 const CDN = "https://cdn.resg.top";
+const OPGG_PAGE = "https://op.gg/zh-cn/lol/modes/aram-mayhem";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 
 const args = process.argv.slice(2);
 const versionArg = args.indexOf("--version");
@@ -48,7 +51,11 @@ async function fetchText(url, cacheKey) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: { "user-agent": "aram-mayhem-helper/gen-data", referer: "https://www.resg.top/" },
+        headers: {
+          "user-agent": UA,
+          "accept-language": "zh-CN,zh;q=0.9",
+          referer: url.startsWith("https://op.gg") ? "https://op.gg/" : "https://www.resg.top/",
+        },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
@@ -60,6 +67,60 @@ async function fetchText(url, cacheKey) {
       await new Promise((r) => setTimeout(r, 400 * attempt));
     }
   }
+}
+
+/**
+ * 抓 OP.GG 的单英雄「海克斯大乱斗 → 强化符文」页，解析内嵌的 RSC 数据。
+ *
+ * 页面里每个强化符文形如：
+ *   { id, tier, performance, popular, name, key, largeIcon, smallIcon, rarity, desc, tooltip }
+ * 其中 performance 是 OP.GG 的强度分（100 ≈ 该模式平均胜率），popular 是选用率百分比。
+ * 返回按 performance 从高到低排序的列表；没有数据时返回 null。
+ */
+async function fetchOpggAugments(alias) {
+  const slug = alias.toLowerCase();
+  let html;
+  try {
+    html = await fetchText(`${OPGG_PAGE}/${slug}/augments`, `opgg_${slug}.html`);
+  } catch (e) {
+    console.warn(`  [!] OP.GG ${slug} 抓取失败: ${e.message}`);
+    return null;
+  }
+
+  const chunkRe = /self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)/g;
+  for (const match of html.matchAll(chunkRe)) {
+    if (!match[1].includes('\\"data\\":[{\\"id\\":')) continue;
+    let chunk;
+    try {
+      chunk = JSON.parse('"' + match[1] + '"');
+    } catch {
+      continue;
+    }
+    const start = chunk.indexOf("[");
+    if (start < 0) continue;
+    let outer;
+    try {
+      outer = JSON.parse(chunk.slice(start));
+    } catch {
+      continue;
+    }
+    const data = outer?.[3]?.data;
+    if (!Array.isArray(data) || data.length < 20) continue;
+
+    return data
+      .filter((a) => Number(a.popular) > 0 && Number(a.performance) > 0)
+      .sort((a, b) => b.performance - a.performance)
+      .map((a) => ({
+        id: Number(a.id),
+        performance: Number(a.performance),
+        popular: Number(a.popular),
+        tier: a.tier ?? null,
+        name: a.name ?? "",
+        icon: a.largeIcon ?? "",
+        rarity: Number(a.rarity) || 0,
+      }));
+  }
+  return null;
 }
 
 /** 接口返回的是 `export default {...}` 的 ES module 文本 */
@@ -96,11 +157,20 @@ const rowWr = (row) => (Number(row?.[4]) || 0) / 10000;
 const uniq = (list) => [...new Set(list)];
 const icon = (p) => (p?.startsWith("http") ? p : CDN + p);
 
+/** OP.GG 的 rarity 位掩码 → 品质（1 白银 / 2 黄金 / 3 棱彩） */
+function rarityToQuality(rarity) {
+  if (rarity === 1) return 1;
+  if (rarity === 4) return 2;
+  if (rarity === 8) return 3;
+  return 0;
+}
+
 /**
  * 把远程图标下载到 public/icons/<kind>/<id>.png，返回应用内的本地路径。
  * 下载失败时保留远程地址作为兜底（联网时仍可显示）。
  */
 async function localIcon(kind, id, remote) {
+  if (!remote) return "";
   const rel = `/icons/${kind}/${id}.png`;
   const dest = resolve(ICON_DIR, kind, `${id}.png`);
   try {
@@ -132,6 +202,7 @@ async function main() {
   ]);
 
   const champions = champList.items ?? [];
+  const listById = new Map((augmentList.items ?? []).map((a) => [String(a.id), a]));
   console.log(`英雄 ${champions.length} 位 · 装备 ${Object.keys(itemDict).length} 件 · 强化 ${augmentList.items?.length ?? 0} 个`);
 
   // 1. 逐个英雄抓详情（并发 6，带缓存）
@@ -147,6 +218,25 @@ async function main() {
   const usedItemIds = new Set();
   const usedAugmentIds = new Set();
   const recs = {};
+
+  // 1.5 抓 OP.GG 的强化符文梯度（每个英雄一页，带缓存）
+  console.log("抓取 OP.GG 强化符文梯度…");
+  const opggPicks = new Map(); // championId -> picks[]
+  const opggAugMeta = new Map(); // augmentId -> { name, icon, rarity }
+  let opggOk = 0;
+
+  await pool(champions, 4, async (c) => {
+    const picks = await fetchOpggAugments(c.alias);
+    if (!picks?.length) return;
+    opggOk++;
+    opggPicks.set(c.id, picks);
+    for (const p of picks) {
+      if (!opggAugMeta.has(p.id)) {
+        opggAugMeta.set(p.id, { name: p.name, icon: p.icon, rarity: p.rarity });
+      }
+    }
+  });
+  console.log(`OP.GG 覆盖 ${opggOk}/${champions.length} 位英雄`);
 
   for (const { id, data } of details) {
     if (!data) continue;
@@ -187,11 +277,31 @@ async function main() {
       .slice(0, 4)
       .map((row) => row[0]);
 
-    // 推荐强化：ra 已按使用率排序，取前 6
-    const augments = uniq((data.ra ?? []).slice(0, 6).map((row) => row[0]));
+    // 推荐强化：优先用 OP.GG 的强度排序（performance 从高到低），抓不到时退回 resg 的使用率前 6
+    const picks = opggPicks.get(id);
+    // 只保留有图标的强化；优先取选用率 ≥0.3% 的，样本太小的（0.01% 之类）只在数量不够时补位
+    const iconOf = (augId) =>
+      listById.get(String(augId))?.ip || opggAugMeta.get(Number(augId))?.icon || "";
+    const viablePicks = (picks ?? []).filter((p) => iconOf(p.id));
+    const preferred = viablePicks.filter((p) => p.popular >= 0.3);
+    const chosen = (preferred.length >= 6 ? preferred : viablePicks).slice(0, 8);
+
+    let augments;
+    if (chosen.length > 0) {
+      augments = chosen.map((p) => ({
+        id: p.id,
+        performance: p.performance,
+        popular: p.popular,
+        tier: p.tier,
+      }));
+    } else {
+      augments = uniq((data.ra ?? []).slice(0, 6).map((row) => row[0]))
+        .filter((augId) => iconOf(augId))
+        .map((augId) => ({ id: augId, performance: null, popular: null, tier: null }));
+    }
 
     [...start, ...boots, ...core, ...situational].forEach((x) => usedItemIds.add(String(x)));
-    augments.forEach((x) => usedAugmentIds.add(String(x)));
+    augments.forEach((a) => usedAugmentIds.add(String(a.id)));
 
     recs[id] = {
       start,
@@ -209,7 +319,6 @@ async function main() {
   // 2. 补齐强化符文详情（真实名称 / 描述，接口里列表页的名称是占位符）
   console.log(`拉取 ${usedAugmentIds.size} 个强化符文详情…`);
   const augmentMeta = {};
-  const listById = new Map((augmentList.items ?? []).map((a) => [String(a.id), a]));
 
   await pool([...usedAugmentIds], CONCURRENCY, async (id) => {
     let meta = listById.get(id);
@@ -219,15 +328,27 @@ async function main() {
     } catch {
       /* 详情失败就用列表里的数据 */
     }
-    if (!meta) return;
-    augmentMeta[id] = {
-      name: meta.name || `海克斯 #${id}`,
-      icon: icon(meta.ip),
-      quality: Number(meta.quality) || 0,
-      tier: meta.tier ?? "",
-      winRate: Number(meta.wr) || 0,
-      desc: stripTags(meta.description || ""),
-    };
+    const fallback = opggAugMeta.get(Number(id));
+    if (meta) {
+      augmentMeta[id] = {
+        name: meta.name || fallback?.name || `海克斯 #${id}`,
+        icon: icon(meta.ip),
+        quality: Number(meta.quality) || 0,
+        tier: meta.tier ?? "",
+        winRate: Number(meta.wr) || 0,
+        desc: stripTags(meta.description || ""),
+      };
+    } else if (fallback) {
+      // resg 没有收录、但 OP.GG 有数据的新强化：用 OP.GG 的名称和图标
+      augmentMeta[id] = {
+        name: fallback.name || `海克斯 #${id}`,
+        icon: fallback.icon,
+        quality: rarityToQuality(fallback.rarity),
+        tier: "",
+        winRate: 0,
+        desc: "",
+      };
+    }
   });
 
   // 3. 组装元数据
@@ -271,6 +392,15 @@ async function main() {
     ...Object.values(champMeta),
   ].filter((m) => m.icon.startsWith("/icons/")).length;
   console.log(`图标已本地化 ${localCount} 个 → public/icons/`);
+
+  // 清掉不在本次数据里的旧图标，避免仓库越攒越大
+  const keepAugments = new Set(Object.keys(augmentMeta).map((id) => `${id}.png`));
+  const augmentDir = resolve(ICON_DIR, "augments");
+  if (existsSync(augmentDir)) {
+    for (const file of await readdir(augmentDir)) {
+      if (!keepAugments.has(file)) await unlink(resolve(augmentDir, file)).catch(() => {});
+    }
+  }
 
   const resg = {
     version,

@@ -52,6 +52,7 @@ struct ItemMeta {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct AugMeta {
     name: String,
     icon: String,
@@ -71,13 +72,22 @@ struct Recommendations {
     champions: HashMap<String, RecEntry>,
 }
 
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+struct AugPick {
+    id: i64,
+    performance: Option<f64>,
+    popular: Option<f64>,
+    tier: Option<i64>,
+}
+
 #[derive(Deserialize)]
 struct RecEntry {
     start: Vec<i64>,
     boots: Vec<i64>,
     core: Vec<i64>,
     situational: Vec<i64>,
-    augments: Vec<i64>,
+    augments: Vec<AugPick>,
     #[serde(rename = "winRate")]
     win_rate: f64,
     tier: String,
@@ -103,8 +113,12 @@ pub struct AugmentView {
     pub icon: String,
     /// 1 = 白银, 2 = 黄金, 3 = 棱彩
     pub quality: u8,
-    pub tier: String,
-    pub win_rate: f64,
+    /// OP.GG 强度分（100 ≈ 该模式平均），无数据时为 null
+    pub performance: Option<f64>,
+    /// OP.GG 选用率（百分比）
+    pub popular: Option<f64>,
+    /// 名次，从 1 开始（按 OP.GG 强度从高到低）
+    pub rank: usize,
     pub desc: String,
 }
 
@@ -221,8 +235,9 @@ fn augment_view(id: i64) -> Option<AugmentView> {
         name: a.name.clone(),
         icon: a.icon.clone(),
         quality: a.quality,
-        tier: a.tier.clone(),
-        win_rate: a.win_rate,
+        performance: None,
+        popular: None,
+        rank: 0,
         desc: a.desc.clone(),
     })
 }
@@ -300,10 +315,18 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
         .get(&champion_id.to_string())
         .ok_or_else(|| format!("{} 暂无统计数据（可能刚上线或样本不足）", champion.name))?;
 
+    // 已按 OP.GG performance 从高到低排好序，rank 直接取下标 + 1
     let augments: Vec<AugmentView> = rec
         .augments
         .iter()
-        .filter_map(|id| augment_view(*id))
+        .enumerate()
+        .filter_map(|(i, pick)| {
+            let mut view = augment_view(pick.id)?;
+            view.rank = i + 1;
+            view.performance = pick.performance;
+            view.popular = pick.popular;
+            Some(view)
+        })
         .collect();
 
     let mut nerf: Vec<(String, String)> = rec
@@ -355,6 +378,15 @@ mod tests {
         assert!(rec.core.iter().all(|i| i.icon.starts_with("/icons/items/")));
         for augment in &rec.augments {
             assert!(augment.icon.starts_with("/icons/augments/"), "{}", augment.icon);
+        }
+        // 强化按 OP.GG 强度从高到低排序，名次连续
+        for (i, augment) in rec.augments.iter().enumerate() {
+            assert_eq!(augment.rank, i + 1);
+            if i > 0 {
+                let prev = rec.augments[i - 1].performance.unwrap_or(0.0);
+                let cur = augment.performance.unwrap_or(0.0);
+                assert!(prev >= cur, "augment order broken at {i}: {prev} < {cur}");
+            }
         }
     }
 
