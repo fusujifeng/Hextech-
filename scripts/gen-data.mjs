@@ -279,29 +279,28 @@ async function main() {
 
     // 推荐强化：优先用 OP.GG 的强度排序（performance 从高到低），抓不到时退回 resg 的使用率前 6
     const picks = opggPicks.get(id);
-    // 只保留有图标的强化；优先取选用率 ≥0.3% 的，样本太小的（0.01% 之类）只在数量不够时补位
+    // 只保留有图标的强化，全量保留（界面按品质分档，需要该英雄每档的全部强化）
     const iconOf = (augId) =>
       listById.get(String(augId))?.ip || opggAugMeta.get(Number(augId))?.icon || "";
     const viablePicks = (picks ?? []).filter((p) => iconOf(p.id));
-    const preferred = viablePicks.filter((p) => p.popular >= 0.3);
-    const chosen = (preferred.length >= 6 ? preferred : viablePicks).slice(0, 8);
 
     let augments;
-    if (chosen.length > 0) {
-      augments = chosen.map((p) => ({
-        id: p.id,
-        performance: p.performance,
-        popular: p.popular,
-        tier: p.tier,
-      }));
+    if (viablePicks.length > 0) {
+      // 紧凑格式：[id, 强度分, 选用率, 品质]，体积约为对象写法的 60%
+      augments = viablePicks.map((p) => [
+        p.id,
+        Number(p.performance.toFixed(2)),
+        Number(p.popular.toFixed(2)),
+        rarityToQuality(p.rarity) || Number(listById.get(String(p.id))?.quality) || 0,
+      ]);
     } else {
       augments = uniq((data.ra ?? []).slice(0, 6).map((row) => row[0]))
         .filter((augId) => iconOf(augId))
-        .map((augId) => ({ id: augId, performance: null, popular: null, tier: null }));
+        .map((augId) => [augId, null, null, Number(listById.get(String(augId))?.quality) || 0]);
     }
 
     [...start, ...boots, ...core, ...situational].forEach((x) => usedItemIds.add(String(x)));
-    augments.forEach((a) => usedAugmentIds.add(String(a.id)));
+    augments.forEach((a) => usedAugmentIds.add(String(a[0])));
 
     recs[id] = {
       start,

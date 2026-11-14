@@ -72,14 +72,8 @@ struct Recommendations {
     champions: HashMap<String, RecEntry>,
 }
 
-#[derive(Deserialize, Clone)]
-#[allow(dead_code)]
-struct AugPick {
-    id: i64,
-    performance: Option<f64>,
-    popular: Option<f64>,
-    tier: Option<i64>,
-}
+/// 强化条目紧凑格式：[id, 强度分, 选用率, 品质]
+type AugPick = (i64, Option<f64>, Option<f64>, u8);
 
 #[derive(Deserialize)]
 struct RecEntry {
@@ -320,11 +314,14 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
         .augments
         .iter()
         .enumerate()
-        .filter_map(|(i, pick)| {
-            let mut view = augment_view(pick.id)?;
+        .filter_map(|(i, (id, performance, popular, quality))| {
+            let mut view = augment_view(*id)?;
             view.rank = i + 1;
-            view.performance = pick.performance;
-            view.popular = pick.popular;
+            view.performance = *performance;
+            view.popular = *popular;
+            if *quality > 0 {
+                view.quality = *quality;
+            }
             Some(view)
         })
         .collect();
