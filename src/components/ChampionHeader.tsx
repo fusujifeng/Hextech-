@@ -9,22 +9,21 @@ const TIER_STYLE: Record<string, string> = {
 };
 
 export function ChampionHeader({ rec }: { rec: Recommendation }) {
-  const [splashBroken, setSplashBroken] = useState(false);
   const [iconBroken, setIconBroken] = useState(false);
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-gold-400/20 bg-[#0a1019]">
-      {!splashBroken && (
+      {/* 本地英雄图标放大模糊作为氛围背景，不依赖远程原画 */}
+      {!iconBroken && (
         <img
-          src={rec.champion.splash}
+          src={rec.champion.icon}
           alt=""
           aria-hidden
           draggable={false}
-          onError={() => setSplashBroken(true)}
-          className="absolute inset-0 h-full w-full scale-105 object-cover opacity-40"
+          className="pointer-events-none absolute -inset-8 h-[calc(100%+4rem)] w-[calc(100%+4rem)] scale-110 object-cover opacity-30 blur-2xl"
         />
       )}
-      <div className="absolute inset-0 bg-gradient-to-r from-[#070b12] via-[#070b12dd] to-[#070b1255]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#070b12] via-[#070b12dd] to-[#070b1244]" />
 
       <div className="relative flex items-center gap-3 p-3">
         <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-gold-400/50 bg-black/50 shadow-lg">

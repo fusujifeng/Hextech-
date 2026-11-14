@@ -47,7 +47,6 @@ export interface ChampionView {
   tier: string;
   winRate: number;
   icon: string;
-  splash: string;
   nicknames: string[];
 }
 
@@ -83,6 +82,8 @@ export interface ChampionBrief {
   winRate: number;
   /** 俗称 / 外号，例如「男枪」 */
   nicknames: string[];
+  /** 本地图标路径，例如 /icons/champions/104.png */
+  icon: string;
 }
 
 export interface Meta {

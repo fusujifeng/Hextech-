@@ -74,18 +74,26 @@ export function ChampionPicker({ open, champions, onClose, onPick }: Props) {
               <button
                 key={c.id}
                 onClick={() => onPick(c.id)}
-                className="flex flex-col items-start gap-0.5 rounded-md border border-white/6 bg-white/3 px-2 py-1.5 text-left transition hover:border-gold-400/45 hover:bg-gold-400/8"
+                className="flex items-center gap-2 rounded-md border border-white/6 bg-white/3 px-2 py-1.5 text-left transition hover:border-gold-400/45 hover:bg-gold-400/8"
               >
-                <span className="flex w-full items-center justify-between gap-1">
-                  <span className="truncate text-[12.5px] text-gold-200/90">{c.name}</span>
-                  {c.tier && <span className="shrink-0 text-[9px] text-white/30">{c.tier}</span>}
-                </span>
-                <span className="w-full truncate text-[10px] text-white/40">{c.title}</span>
-                {c.nicknames.length > 0 && (
-                  <span className="w-full truncate text-[9.5px] text-teal-300/45">
-                    {c.nicknames.join(" / ")}
+                <img
+                  src={c.icon}
+                  alt=""
+                  draggable={false}
+                  className="h-8 w-8 shrink-0 rounded border border-white/10 object-cover"
+                />
+                <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                  <span className="flex w-full items-center justify-between gap-1">
+                    <span className="truncate text-[12.5px] text-gold-200/90">{c.name}</span>
+                    {c.tier && <span className="shrink-0 text-[9px] text-white/30">{c.tier}</span>}
                   </span>
-                )}
+                  <span className="w-full truncate text-[10px] text-white/40">{c.title}</span>
+                  {c.nicknames.length > 0 && (
+                    <span className="w-full truncate text-[9.5px] text-teal-300/45">
+                      {c.nicknames.join(" / ")}
+                    </span>
+                  )}
+                </span>
               </button>
             ))}
           </div>

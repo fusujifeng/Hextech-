@@ -121,7 +121,6 @@ pub struct ChampionView {
     pub tier: String,
     pub win_rate: f64,
     pub icon: String,
-    pub splash: String,
     /// 俗称 / 外号，例如「男枪」
     pub nicknames: Vec<String>,
 }
@@ -161,6 +160,7 @@ pub struct ChampionBrief {
     pub tier: String,
     pub win_rate: f64,
     pub nicknames: Vec<String>,
+    pub icon: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -175,10 +175,6 @@ pub struct Meta {
 }
 
 // ── 查询 ─────────────────────────────────────────────────────────────
-
-fn splash_url(alias: &str) -> String {
-    format!("https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{alias}_0.jpg")
-}
 
 /// 外号去掉与英雄名重复的条目，避免搜索卡片里出现「格雷福斯 / 格雷福斯」
 fn nicknames(alias: &str, name: &str) -> Vec<String> {
@@ -205,7 +201,6 @@ fn champion_view(id: i32) -> Option<ChampionView> {
         tier: c.tier.clone(),
         win_rate: c.win_rate,
         icon: c.icon.clone(),
-        splash: splash_url(&c.alias),
         nicknames: nicknames(&c.alias, &c.title),
     })
 }
@@ -265,6 +260,7 @@ pub fn champions() -> Vec<ChampionBrief> {
                 tier: c.tier.clone(),
                 win_rate: c.win_rate,
                 nicknames: nicknames(&c.alias, &c.title),
+                icon: c.icon.clone(),
             })
         })
         .collect();
@@ -350,8 +346,16 @@ mod tests {
         let rec = recommendation(222, "mayhem").expect("jinx");
         assert!(rec.core.len() >= 3, "core={:?}", rec.core);
         assert!(!rec.champion.name.is_empty());
-        assert!(rec.champion.icon.starts_with("https://cdn.resg.top/"));
-        assert!(rec.core.iter().all(|i| i.icon.starts_with("https://")));
+        // 图标必须是随包本地资源，断网也要能显示
+        assert!(
+            rec.champion.icon.starts_with("/icons/champions/"),
+            "{}",
+            rec.champion.icon
+        );
+        assert!(rec.core.iter().all(|i| i.icon.starts_with("/icons/items/")));
+        for augment in &rec.augments {
+            assert!(augment.icon.starts_with("/icons/augments/"), "{}", augment.icon);
+        }
     }
 
     #[test]

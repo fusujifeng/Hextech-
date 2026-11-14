@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = resolve(root, "src-tauri/data");
 const CACHE_DIR = resolve(root, "scripts/.cache");
+const ICON_DIR = resolve(root, "public/icons");
 
 const API = "https://www.resg.top/api/v1";
 const CDN = "https://cdn.resg.top";
@@ -94,6 +95,27 @@ const rowWr = (row) => (Number(row?.[4]) || 0) / 10000;
 
 const uniq = (list) => [...new Set(list)];
 const icon = (p) => (p?.startsWith("http") ? p : CDN + p);
+
+/**
+ * 把远程图标下载到 public/icons/<kind>/<id>.png，返回应用内的本地路径。
+ * 下载失败时保留远程地址作为兜底（联网时仍可显示）。
+ */
+async function localIcon(kind, id, remote) {
+  const rel = `/icons/${kind}/${id}.png`;
+  const dest = resolve(ICON_DIR, kind, `${id}.png`);
+  try {
+    if (!REFRESH && existsSync(dest)) return rel;
+    const res = await fetch(remote, { headers: { "user-agent": "aram-mayhem-helper/gen-data" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    await mkdir(dirname(dest), { recursive: true });
+    await writeFile(dest, buf);
+    return rel;
+  } catch (e) {
+    console.warn(`  [!] 图标下载失败 ${remote}: ${e.message}（保留远程地址）`);
+    return remote;
+  }
+}
 
 // ── 主流程 ──────────────────────────────────────────────────────────
 
@@ -228,6 +250,27 @@ async function main() {
     if (!it) continue;
     itemMeta[id] = { name: it.name, icon: icon(it.ip) };
   }
+
+  // 4. 图标落地到 public/icons，随应用分发，断网也能显示
+  console.log(
+    `下载图标：${usedItemIds.size} 件装备 / ${Object.keys(augmentMeta).length} 个强化 / ${champions.length} 位英雄`,
+  );
+  await pool([...usedItemIds], CONCURRENCY, async (id) => {
+    if (itemMeta[id]) itemMeta[id].icon = await localIcon("items", id, itemMeta[id].icon);
+  });
+  await pool(Object.keys(augmentMeta), CONCURRENCY, async (id) => {
+    augmentMeta[id].icon = await localIcon("augments", id, augmentMeta[id].icon);
+  });
+  await pool(champions, CONCURRENCY, async (c) => {
+    const meta = champMeta[c.id];
+    if (meta) meta.icon = await localIcon("champions", c.id, meta.icon);
+  });
+  const localCount = [
+    ...Object.values(itemMeta),
+    ...Object.values(augmentMeta),
+    ...Object.values(champMeta),
+  ].filter((m) => m.icon.startsWith("/icons/")).length;
+  console.log(`图标已本地化 ${localCount} 个 → public/icons/`);
 
   const resg = {
     version,
