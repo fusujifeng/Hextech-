@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use league_link::{build_lcu_client, lcu_get, Credentials};
+use league_link::{lcu_get, Credentials};
 use serde::Serialize;
 use serde_json::Value;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
@@ -66,6 +66,10 @@ pub struct Runtime {
     source: String,
     pub state: State,
     last_scan: Instant,
+    /// 最近一次在选人阶段识别到的英雄，用于对局中继续显示（F1 浮窗）
+    last_champion: Option<i32>,
+    last_champion_name: Option<String>,
+    last_mode: String,
 }
 
 impl Runtime {
@@ -76,6 +80,9 @@ impl Runtime {
             source: String::new(),
             state: offline("正在查找英雄联盟客户端…"),
             last_scan: Instant::now() - RESCAN_INTERVAL * 2,
+            last_champion: None,
+            last_champion_name: None,
+            last_mode: String::new(),
         }
     }
 
@@ -284,7 +291,7 @@ pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
             (g.client.clone(), g.creds.clone())
         };
 
-        let next = match (client, creds) {
+        let mut next = match (client, creds) {
             (Some(client), Some(creds)) => match probe(&client, &creds).await {
                 Ok(state) => {
                     let source = {
@@ -303,6 +310,29 @@ pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
             },
             _ => offline("等待英雄联盟客户端启动…"),
         };
+
+        // 记住选人阶段的英雄；进入对局后继续显示，F1 浮窗才有内容
+        {
+            let mut g = rt.lock().unwrap();
+            if next.connected {
+                if next.champion_id.is_some() && (next.mode == "mayhem" || next.mode == "aram") {
+                    g.last_champion = next.champion_id;
+                    g.last_champion_name = next.champion_name.clone();
+                    g.last_mode = next.mode.clone();
+                } else if next.champion_id.is_none()
+                    && matches!(next.phase.as_str(), "InProgress" | "GameStart" | "Reconnect")
+                    && (next.mode == "mayhem" || next.mode == "aram" || next.mode == "idle")
+                {
+                    if let Some(id) = g.last_champion {
+                        next.champion_id = Some(id);
+                        next.champion_name = g.last_champion_name.clone();
+                        if next.mode == "idle" && !g.last_mode.is_empty() {
+                            next.mode = g.last_mode.clone();
+                        }
+                    }
+                }
+            }
+        }
 
         let changed = {
             let mut g = rt.lock().unwrap();
@@ -325,6 +355,19 @@ impl State {
     }
 }
 
+/// 访问 LCU 的 HTTP 客户端。
+///
+/// 显式 `no_proxy()`：LCU 只监听 127.0.0.1，绝不能走系统/环境变量里的代理——
+/// 否则在挂代理的机器上会出现「端口通但请求失败」，表现为客户端明明开着却一直显示未连接。
+fn build_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+}
+
 async fn ensure_credentials(rt: &Arc<Mutex<Runtime>>) {
     let should_scan = {
         let g = rt.lock().unwrap();
@@ -338,7 +381,7 @@ async fn ensure_credentials(rt: &Arc<Mutex<Runtime>>) {
     let mut g = rt.lock().unwrap();
     g.last_scan = Instant::now();
     if let Some((creds, source)) = found {
-        match build_lcu_client() {
+        match build_client() {
             Ok(client) => {
                 g.source = source.to_string();
                 g.creds = Some(creds);
@@ -365,16 +408,53 @@ async fn probe(client: &reqwest::Client, creds: &Credentials) -> Result<State, S
         ..State::default()
     };
 
-    if phase == "ChampSelect" {
+    // 选人与对局阶段都读一次 gameflow 会话：拿队列号 / 模式，用于判定海克斯大乱斗
+    if matches!(
+        phase.as_str(),
+        "ChampSelect" | "GameStart" | "InProgress" | "Reconnect"
+    ) {
         if let Ok(flow) = lcu_get::<Value>(client, creds, "/lol-gameflow/v1/session").await {
-            state.queue_id = flow.pointer("/gameData/queue/id").and_then(Value::as_i64);
-            state.queue_type = flow
-                .pointer("/gameData/queue/type")
+            let queue = flow.pointer("/gameData/queue");
+            let queue_id = queue.and_then(|q| q.get("id")).and_then(Value::as_i64);
+            let queue_type = queue
+                .and_then(|q| q.get("type"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-        }
+            let game_mode = queue
+                .and_then(|q| q.get("gameMode"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let map_id = queue
+                .and_then(|q| q.get("mapId"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let name = queue
+                .and_then(|q| q.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let is_custom = flow
+                .pointer("/gameData/isCustomGame")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
+            state.mode = classify(&QueueInfo {
+                id: queue_id,
+                queue_type: &queue_type,
+                game_mode: &game_mode,
+                map_id,
+                name: &name,
+                is_custom,
+            })
+            .to_string();
+            state.queue_id = queue_id;
+            state.queue_type = queue_type;
+        }
+    }
+
+    if phase == "ChampSelect" {
         if let Ok(session) = lcu_get::<Value>(client, creds, "/lol-champ-select/v1/session").await {
             state.bench_enabled = session
                 .get("benchEnabled")
@@ -401,45 +481,96 @@ async fn probe(client: &reqwest::Client, creds: &Credentials) -> Result<State, S
                 }
             }
         }
+    }
 
-        state.mode = classify(state.queue_id, &state.queue_type).to_string();
-    } else {
-        state.mode = "idle".into();
+    if state.mode.is_empty() {
+        state.mode = if phase == "ChampSelect" { "other" } else { "idle" }.into();
     }
 
     Ok(state)
 }
 
-/// 以 queue_id 为准，queue_type / 本地化名称作为兜底信号。
-fn classify(queue_id: Option<i64>, queue_type: &str) -> &'static str {
-    match queue_id {
-        Some(2400) => return "mayhem",
-        Some(450) => return "aram",
-        _ => {}
+/// 队列信息：queue_id 是权威信号，其余字段用于识别自定义房间与国服模式。
+struct QueueInfo<'a> {
+    id: Option<i64>,
+    queue_type: &'a str,
+    game_mode: &'a str,
+    map_id: i64,
+    name: &'a str,
+    is_custom: bool,
+}
+
+fn classify(q: &QueueInfo<'_>) -> &'static str {
+    let qt = q.queue_type.to_ascii_uppercase();
+    let gm = q.game_mode.to_ascii_uppercase();
+
+    // 2400 = 匹配的海克斯大乱斗；KIWI 是国服客户端里这个模式的 gameMode
+    if q.id == Some(2400)
+        || gm == "KIWI"
+        || qt == "KIWI"
+        || gm.contains("MAYHEM")
+        || qt.contains("MAYHEM")
+        || q.name.contains("海克斯")
+    {
+        return "mayhem";
     }
 
-    let t = queue_type.to_ascii_uppercase();
-    if t.contains("MAYHEM") || queue_type.contains("海克斯") {
-        "mayhem"
-    } else if t.contains("ARAM") || queue_type.contains("大乱斗") {
-        "aram"
-    } else {
-        "other"
+    if q.id == Some(450)
+        || gm == "ARAM"
+        || qt.contains("ARAM")
+        || q.name.contains("大乱斗")
+    {
+        return "aram";
     }
+
+    // 自定义极地大乱斗：queueId 可能是 0，用地图 12（嚎哭深渊）兜底
+    if q.is_custom && q.map_id == 12 {
+        return "aram";
+    }
+
+    "other"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn q<'a>(
+        id: Option<i64>,
+        queue_type: &'a str,
+        game_mode: &'a str,
+        map_id: i64,
+        name: &'a str,
+        is_custom: bool,
+    ) -> &'static str {
+        classify(&QueueInfo {
+            id,
+            queue_type,
+            game_mode,
+            map_id,
+            name,
+            is_custom,
+        })
+    }
+
     #[test]
     fn classifies_mayhem_first() {
-        assert_eq!(classify(Some(2400), ""), "mayhem");
-        assert_eq!(classify(Some(450), "ARAM_UNRANKED_5x5"), "aram");
-        assert_eq!(classify(None, "ARAM_MAYHEM"), "mayhem");
-        assert_eq!(classify(Some(420), "RANKED_SOLO_5x5"), "other");
-        // 国服海克斯大乱斗的 queue.type 是 KIWI，必须靠 queue_id 判定
-        assert_eq!(classify(Some(2400), "KIWI"), "mayhem");
+        assert_eq!(q(Some(2400), "", "", 12, "", false), "mayhem");
+        assert_eq!(q(Some(450), "ARAM_UNRANKED_5x5", "ARAM", 12, "", false), "aram");
+        assert_eq!(q(None, "ARAM_MAYHEM", "", 12, "", false), "mayhem");
+        assert_eq!(q(Some(420), "RANKED_SOLO_5x5", "CLASSIC", 11, "", false), "other");
+        // 国服海克斯大乱斗的 queue.type / gameMode 都是 KIWI
+        assert_eq!(q(Some(2400), "KIWI", "KIWI", 12, "", false), "mayhem");
+    }
+
+    #[test]
+    fn classifies_custom_aram_mayhem() {
+        // 自定义房间：queueId 3270，gameMode KIWI，name 海克斯大乱斗
+        assert_eq!(q(Some(3270), "KIWI", "KIWI", 12, "海克斯大乱斗 ", true), "mayhem");
+        // 自定义极地大乱斗：只有地图 12 + 自定义标记
+        assert_eq!(q(Some(0), "", "CLASSIC", 12, "", true), "aram");
+        // 自定义召唤师峡谷不应误判
+        assert_eq!(q(Some(0), "", "CLASSIC", 11, "", true), "other");
     }
 
     #[test]

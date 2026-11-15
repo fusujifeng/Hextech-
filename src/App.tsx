@@ -335,6 +335,7 @@ export default function App() {
           {pinned ? "已置顶 · " : ""}
           v{appVersion || "0.1.0"}
           {meta ? ` · 数据 ${meta.version}` : ""}
+          <span className="text-white/20"> · F1 唤起</span>
         </span>
         <button
           onClick={checkUpdateManually}

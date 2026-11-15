@@ -8,6 +8,9 @@ mod lcu;
 
 use std::sync::{Arc, Mutex};
 
+use tauri::Manager;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
 pub struct AppState {
     runtime: Arc<Mutex<lcu::Runtime>>,
 }
@@ -32,6 +35,22 @@ fn get_meta() -> data::Meta {
     data::meta()
 }
 
+/// F1：游戏里把窗口呼出来并置顶；再按一次收起。
+fn toggle_floating_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    if window.is_focused().unwrap_or(false) {
+        let _ = window.hide();
+    } else {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let runtime = Arc::new(Mutex::new(lcu::Runtime::new()));
@@ -39,10 +58,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_floating_window(app);
+                    }
+                })
+                .build(),
+        )
         .manage(AppState {
             runtime: runtime.clone(),
         })
         .setup(move |app| {
+            // F1 全局热键：选人/对局中都能把工具呼到最前
+            if let Err(err) = app.global_shortcut().register("F1") {
+                eprintln!("[aram-mayhem-helper] 注册 F1 快捷键失败: {err}");
+            }
+
             let handle = app.handle().clone();
             let rt = runtime.clone();
             tauri::async_runtime::spawn(async move {
