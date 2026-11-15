@@ -152,13 +152,26 @@ Rust 侧会过滤掉与英雄名完全相同的外号，避免搜索结果里出
 
 ## 国服 / WeGame 说明
 
-国服 WeGame 环境下 `lockfile` 常常是 0 字节，进程命令行也可能读不到。`league-link` 的三路发现顺序是：
+国服 WeGame 环境下，`LeagueClientUx.exe` 的**命令行是读不到的**（受保护进程），`lockfile` 也常常是 0 字节。
+实测这台机器上：
+
+- `英雄联盟\LeagueClient\lockfile` → 0 字节
+- 进程命令行 / ExecutablePath → 空
+- 但 `英雄联盟\LeagueClient\*_LeagueClientUx.log` 开头就写着完整参数：
+  `--app-port=2951 --remoting-auth-token=...`
+
+因此凭证发现按以下顺序进行：
 
 1. 扫描 `LeagueClientUx.exe` 命令行里的 `--app-port` / `--remoting-auth-token`
-2. 解析安装目录下的 `lockfile`
-3. 解析最新的 `*_LeagueClientUx.log`（日志里嵌了完整命令行，无需提权）
+2. 注册表卸载项（`DisplayName` 含「英雄联盟」/「League of Legends」）里的 `InstallLocation` / `InstallSource`
+3. 常见安装根目录（`*:\WeGameApps`、`*:\Game\Wegame\WeGameApps` 等）扫一层
+4. 依次尝试 `<install>\lockfile`、`<install>\LeagueClient\lockfile`
+5. 依次尝试 `<install>\LeagueClient`、`<install>\Game\Logs\LeagueClient Logs` 等目录下最新的 `*_LeagueClientUx.log`
 
-第 2、3 步的安装目录由运行中的客户端进程路径推断，并补充了几个常见安装位置。
+每个候选凭证都会先做一次 **TCP 端口存活检查**，避免上一次会话遗留的过期日志把应用卡在“连接失败”循环里。
+
+另外，海克斯大乱斗的 `queue.type` 在国服客户端里是 `KIWI`，所以模式判断**以 `queue_id == 2400` 为准**，
+`queue_type` 只作为兜底信号。
 
 ## 已知限制
 

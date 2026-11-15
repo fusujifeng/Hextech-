@@ -104,41 +104,63 @@ fn offline(msg: &str) -> State {
 
 // ── 凭证发现 ─────────────────────────────────────────────────────────
 
-/// 三路兜底：进程扫描 → lockfile → 客户端日志。
+/// 四路兜底：进程命令行 → 注册表/常见目录 → lockfile → 客户端日志。
+///
+/// 国服 WeGame 的典型情况：`LeagueClientUx.exe` 的命令行读不到、`lockfile` 是 0 字节，
+/// 但 `LeagueClient\*_LeagueClientUx.log` 里完整记录了 `--app-port` / `--remoting-auth-token`。
 fn discover() -> Option<(Credentials, &'static str)> {
-    // 1. 进程命令行（最可靠）
+    // 1. 进程命令行（国际服最可靠）
     if let Some(creds) = league_link::try_find_lcu() {
-        return Some((creds, "进程扫描"));
+        if port_alive(creds.port) {
+            return Some((creds, "进程扫描"));
+        }
     }
 
-    // 2/3. 进程还在、但命令行读不到（提权 / 受保护），用安装目录兜底
     let dirs = install_dirs();
+
+    // 2. lockfile（国际服常见；国服多半是 0 字节）
     for dir in &dirs {
-        let lockfile = dir.join("lockfile");
-        if lockfile.is_file() {
-            if let Ok(creds) = league_link::try_find_lcu_via_lockfile(&lockfile) {
-                if !creds.password.is_empty() {
+        for lock in [dir.join("lockfile"), dir.join("LeagueClient").join("lockfile")] {
+            if !lock.is_file() {
+                continue;
+            }
+            if let Ok(creds) = league_link::try_find_lcu_via_lockfile(&lock) {
+                if !creds.password.is_empty() && port_alive(creds.port) {
                     return Some((creds, "lockfile"));
                 }
             }
         }
     }
+
+    // 3. 客户端日志（国服 WeGame 的主要路径）
     for dir in &dirs {
         for logs in log_dirs(dir) {
-            if logs.is_dir() {
-                if let Ok(creds) = league_link::try_find_lcu_via_logs(&logs) {
+            if !logs.is_dir() {
+                continue;
+            }
+            if let Ok(creds) = league_link::try_find_lcu_via_logs(&logs) {
+                if port_alive(creds.port) {
                     return Some((creds, "日志解析"));
                 }
             }
         }
     }
+
     None
 }
 
-/// 从运行中的 LeagueClientUx 进程路径推断安装目录，另外补几个常见安装位置。
+/// 端口是否还在监听——用来淘汰上一次会话留下的过期日志凭证。
+fn port_alive(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// 依次从进程路径、注册表卸载项、常见安装根目录推断安装位置。
 fn install_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
 
+    // 1. 运行中的客户端进程路径
     let mut sys = System::new();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::everything());
     for process in sys.processes().values() {
@@ -155,27 +177,83 @@ fn install_dirs() -> Vec<PathBuf> {
         }
     }
 
-    for root in [
-        r"C:\Riot Games\League of Legends",
-        r"D:\Riot Games\League of Legends",
-        r"E:\Riot Games\League of Legends",
-        r"C:\Program Files\Tencent\League of Legends",
-        r"D:\Program Files\Tencent\League of Legends",
-        r"C:\WeGameApps\英雄联盟",
-        r"D:\WeGameApps\英雄联盟",
-    ] {
-        let p = PathBuf::from(root);
-        if p.is_dir() {
-            push_unique(&mut dirs, p.clone());
-            // 国服安装目录通常多一层 Game
-            let game = p.join("Game");
-            if game.is_dir() {
-                push_unique(&mut dirs, game);
+    // 2. 注册表：WeGame 安装的「英雄联盟」会写 InstallLocation / InstallSource
+    for path in registry_install_dirs() {
+        push_unique(&mut dirs, path);
+    }
+
+    // 3. 常见安装位置，以及 WeGame 根目录下扫一层
+    let mut roots: Vec<PathBuf> = vec![
+        PathBuf::from(r"C:\Riot Games\League of Legends"),
+        PathBuf::from(r"D:\Riot Games\League of Legends"),
+        PathBuf::from(r"E:\Riot Games\League of Legends"),
+    ];
+    for drive in ["C:", "D:", "E:", "F:"] {
+        for rel in [
+            r"WeGameApps",
+            r"Game\Wegame\WeGameApps",
+            r"Program Files\Tencent",
+            r"Program Files\WeGameApps",
+            r"Tencent",
+        ] {
+            roots.push(PathBuf::from(format!(r"{drive}\{rel}")));
+        }
+    }
+
+    for root in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        push_unique(&mut dirs, root.clone());
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    push_unique(&mut dirs, path);
+                }
             }
         }
     }
 
     dirs
+}
+
+/// 从注册表卸载项里找英雄联盟安装目录（支持中文名与英文名）。
+fn registry_install_dirs() -> Vec<PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+    use winreg::RegKey;
+
+    let mut out = Vec::new();
+    let targets = [
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ];
+
+    for (hive, path) in targets {
+        let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(path, KEY_READ) else {
+            continue;
+        };
+        for name in key.enum_keys().flatten() {
+            let Ok(sub) = key.open_subkey_with_flags(&name, KEY_READ) else {
+                continue;
+            };
+            let display: String = sub.get_value("DisplayName").unwrap_or_default();
+            let lower = display.to_lowercase();
+            if !(display.contains("英雄联盟") || lower.contains("league of legends")) {
+                continue;
+            }
+            for value in ["InstallLocation", "InstallSource"] {
+                if let Ok(location) = sub.get_value::<String, _>(value) {
+                    let trimmed = location.trim().trim_end_matches('\\');
+                    if !trimmed.is_empty() {
+                        push_unique(&mut out, PathBuf::from(trimmed));
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn push_unique(list: &mut Vec<PathBuf>, p: PathBuf) {
@@ -186,9 +264,12 @@ fn push_unique(list: &mut Vec<PathBuf>, p: PathBuf) {
 
 fn log_dirs(install: &std::path::Path) -> Vec<PathBuf> {
     vec![
-        install.join("Logs").join("LeagueClient Logs"),
+        // 国服 WeGame：Ux 日志直接放在 LeagueClient 目录下
+        install.join("LeagueClient"),
         install.join("Game").join("Logs").join("LeagueClient Logs"),
-        install.join("LeagueClient Logs"),
+        install.join("Logs").join("LeagueClient Logs"),
+        install.join("Logs").join("LeagueClientUx Logs"),
+        install.join("LeagueClient").join("Logs"),
     ]
 }
 
@@ -357,6 +438,17 @@ mod tests {
         assert_eq!(classify(Some(450), "ARAM_UNRANKED_5x5"), "aram");
         assert_eq!(classify(None, "ARAM_MAYHEM"), "mayhem");
         assert_eq!(classify(Some(420), "RANKED_SOLO_5x5"), "other");
+        // 国服海克斯大乱斗的 queue.type 是 KIWI，必须靠 queue_id 判定
+        assert_eq!(classify(Some(2400), "KIWI"), "mayhem");
+    }
+
+    #[test]
+    fn log_dirs_cover_wegame_layout() {
+        let dirs = log_dirs(std::path::Path::new(r"C:\LoL"));
+        assert!(dirs.iter().any(|d| d.ends_with("LeagueClient")));
+        assert!(dirs
+            .iter()
+            .any(|d| d.ends_with("LeagueClient Logs")));
     }
 
     #[test]
