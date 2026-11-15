@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import * as api from "./lib/api";
 import { checkForUpdate, installUpdate } from "./lib/updater";
-import { BuildSections } from "./components/BuildSections";
-import { ChampionHeader } from "./components/ChampionHeader";
+import { ChampionDetail } from "./components/ChampionDetail";
 import { ChampionPicker } from "./components/ChampionPicker";
 import {
   PHASE_LABEL,
@@ -300,8 +299,7 @@ export default function App() {
 
         {showBuild ? (
           <div className="animate-fade-up space-y-3">
-            <ChampionHeader rec={rec} />
-            <BuildSections rec={rec} />
+            <ChampionDetail rec={rec} />
             <div className="flex items-center justify-between border-t border-white/6 pt-2 text-[9.5px] text-white/25">
               <span>
                 {rec.source} · 数据 {rec.version}
