@@ -364,6 +364,77 @@ pub fn champion_board(ids: &[i32]) -> Vec<ChampionRank> {
     list
 }
 
+/// 去掉空格/标点并转小写：OCR 会在每个汉字之间插空格，必须归一化后再匹配。
+fn normalize_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// 从 OCR 文本里找出已知强化符文名字，返回命中 id（按名字长度降序，长名字更可靠）。
+pub fn find_augments_in_text(text: &str) -> Vec<i64> {
+    let haystack = normalize_text(text);
+    let mut hits: Vec<(usize, i64)> = Vec::new();
+
+    for (id, meta) in RESG.augments.iter() {
+        let name = normalize_text(&meta.name);
+        let len = name.chars().count();
+        if len < 2 {
+            continue;
+        }
+        if haystack.contains(&name) {
+            if let Ok(id) = id.parse::<i64>() {
+                hits.push((len, id));
+            }
+        }
+    }
+
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    hits.into_iter().map(|(_, id)| id).collect()
+}
+
+/// 从 OCR 文本里找出英雄中文名（开局三选一英雄牌），按名字长度降序。
+pub fn find_champions_in_text(text: &str) -> Vec<i64> {
+    let haystack = normalize_text(text);
+    let mut hits: Vec<(usize, i64)> = Vec::new();
+
+    for (id, meta) in RESG.champions.iter() {
+        // 英雄牌上可能写名字（亚索）也可能写称号（疾风剑豪），两种都试
+        let mut best = 0;
+        for candidate in [&meta.name, &meta.title] {
+            let text = normalize_text(candidate);
+            let len = text.chars().count();
+            if len >= 2 && haystack.contains(&text) {
+                best = best.max(len);
+            }
+        }
+        if best > 0 {
+            if let Ok(id) = id.parse::<i64>() {
+                hits.push((best, id));
+            }
+        }
+    }
+
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    hits.into_iter().map(|(_, id)| id).collect()
+}
+
+/// 给 OCR 命中的符文集齐当前英雄的档内排名，并按档内名次排序。
+pub fn augment_picks(champion_id: i32, ids: &[i64], mode: &str) -> Vec<AugmentView> {
+    let Ok(rec) = recommendation(champion_id, mode) else {
+        return Vec::new();
+    };
+
+    let mut picks: Vec<AugmentView> = ids
+        .iter()
+        .filter_map(|id| rec.augments.iter().find(|a| a.id == *id).cloned())
+        .collect();
+
+    picks.sort_by_key(|a| a.tier_rank);
+    picks
+}
+
 fn mode_label(mode: &str) -> &'static str {
     match mode {
         "mayhem" => "海克斯大乱斗",
@@ -539,6 +610,39 @@ mod tests {
                 .count();
             assert_eq!(augment.tier_total, total, "档内总数应与该品质数量一致");
         }
+    }
+
+    #[test]
+    fn finds_augments_in_spaced_ocr_text() {
+        let rec = recommendation(222, "mayhem").expect("jinx");
+        let target = &rec.augments[0];
+
+        // Windows OCR 会在每个汉字之间插空格，匹配前必须去掉
+        let spaced: String = target
+            .name
+            .chars()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let ids = find_augments_in_text(&format!("xxx {spaced} yyy"));
+        assert!(ids.contains(&target.id), "应识别出 {}", target.name);
+
+        let picks = augment_picks(222, &ids, "mayhem");
+        let hit = picks.iter().find(|p| p.id == target.id).expect("档内排名");
+        assert!(hit.tier_total > 0);
+        assert!(hit.tier_rank >= 1);
+    }
+
+    #[test]
+    fn finds_champions_in_spaced_ocr_text() {
+        // OCR 会在每个汉字之间插空格
+        let ids = find_champions_in_text("xxx 金 克 丝 yyy 盖 伦 zzz");
+        assert!(ids.contains(&222), "应识别出金克丝, got {ids:?}");
+
+        let board = champion_board(&[222, 86]);
+        assert_eq!(board.len(), 2);
+        assert!(board.iter().all(|c| c.rank >= 1));
     }
 
     #[test]

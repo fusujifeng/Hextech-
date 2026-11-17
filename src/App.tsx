@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
 import * as api from "./lib/api";
 import {
   checkForUpdate,
@@ -11,11 +12,14 @@ import {
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ChampSelectBoard } from "./components/ChampSelectBoard";
+import { AugmentPrompt } from "./components/AugmentPrompt";
 import { ChampionDetail } from "./components/ChampionDetail";
 import { ChampionPicker } from "./components/ChampionPicker";
 import {
   PHASE_LABEL,
+  type AugmentView,
   type ChampionBrief,
+  type ChampionRank,
   type LcuState,
   type Meta,
   type Recommendation,
@@ -69,6 +73,9 @@ export default function App() {
   const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
   const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [augmentPicks, setAugmentPicks] = useState<AugmentView[] | null>(null);
+  const [champCards, setChampCards] = useState<ChampionRank[]>([]);
+  const [cardsRefreshing, setCardsRefreshing] = useState(false);
 
   // 订阅 Rust 侧 500ms 轮询推送的状态
   useEffect(() => {
@@ -136,6 +143,63 @@ export default function App() {
   useEffect(() => {
     if (updatePromptOpen) setSettingsOpen(false);
   }, [updatePromptOpen]);
+
+  // 悬浮球在符文等级+满血时点击，后端 OCR 出的三张卡通过事件推过来
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    listen<AugmentView[]>("augment-options", (event) => {
+      if (!disposed && event.payload?.length) setAugmentPicks(event.payload);
+    })
+      .then((un) => {
+        if (disposed) un();
+        else unlisten = un;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // 选人开局三张英雄牌：后端在进入选人后 OCR 识别，通过事件推过来
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    listen<ChampionRank[]>("champ-select-cards", (event) => {
+      if (!disposed && event.payload?.length) setChampCards(event.payload);
+    })
+      .then((un) => {
+        if (disposed) un();
+        else unlisten = un;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // 离开选人阶段清空英雄牌
+  useEffect(() => {
+    if (lcu?.phase !== "ChampSelect") setChampCards([]);
+  }, [lcu?.phase]);
+
+  // 重抽英雄牌后手动刷新：收起助手重新截屏识别
+  const refreshChampCards = useCallback(() => {
+    setCardsRefreshing(true);
+    api
+      .refreshChampCards()
+      .then((rows) => {
+        if (rows?.length) setChampCards(rows);
+      })
+      .catch(() => undefined)
+      .finally(() => setCardsRefreshing(false));
+  }, []);
 
   const liveMode = lcu && (lcu.mode === "mayhem" || lcu.mode === "aram") ? lcu.mode : null;
   const liveChampionId = liveMode ? lcu?.championId ?? null : null;
@@ -319,6 +383,9 @@ export default function App() {
           <ChampSelectBoard
             championId={lcu?.championId ?? null}
             benchIds={lcu?.benchChampionIds ?? []}
+            cards={champCards}
+            onRefreshCards={lcu?.mode === "mayhem" ? refreshChampCards : undefined}
+            refreshing={cardsRefreshing}
           />
         )}
 
@@ -421,6 +488,8 @@ export default function App() {
         onDismiss={closeUpdatePrompt}
         onInstall={handleInstall}
       />
+
+      <AugmentPrompt picks={augmentPicks} onClose={() => setAugmentPicks(null)} />
 
       <SettingsPanel
         open={settingsOpen}

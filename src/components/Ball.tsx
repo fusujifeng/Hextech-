@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -8,6 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
  */
 export function Ball() {
   const drag = useRef({ down: false, moved: false, x: 0, y: 0 });
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.add("ball-mode");
@@ -19,7 +20,10 @@ export function Ball() {
   }, []);
 
   const expand = () => {
-    invoke("expand_from_ball").catch(() => undefined);
+    setBusy(true);
+    invoke("expand_from_ball")
+      .catch(() => undefined)
+      .finally(() => setBusy(false));
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -50,8 +54,11 @@ export function Ball() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         title="点击展开 ARAMHelper"
-        className="flex h-[58px] w-[58px] cursor-pointer select-none items-center justify-center rounded-full border border-gold-400/70 bg-[#0b111c] shadow-[0_6px_18px_rgba(0,0,0,0.55)] transition hover:scale-105 hover:border-gold-300 active:scale-95"
+        className="relative flex h-[58px] w-[58px] cursor-pointer select-none items-center justify-center rounded-full border border-gold-400/70 bg-[#0b111c] shadow-[0_6px_18px_rgba(0,0,0,0.55)] transition hover:scale-105 hover:border-gold-300 active:scale-95"
       >
+        {busy && (
+          <span className="pointer-events-none absolute -inset-1 animate-spin rounded-full border-2 border-transparent border-t-gold-300/80" />
+        )}
         <img
           src="/app-icon.png"
           alt="ARAMHelper"

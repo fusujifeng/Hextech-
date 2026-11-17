@@ -4,7 +4,9 @@
 //! 业务/交互逻辑全部留在前端 TypeScript。
 
 mod data;
+mod live;
 mod lcu;
+mod vision;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,6 +36,7 @@ pub struct PendingUpdate {
 pub struct AppState {
     runtime: Arc<Mutex<lcu::Runtime>>,
     pending_update: Arc<Mutex<Option<PendingUpdate>>>,
+    live: Arc<Mutex<live::LiveState>>,
 }
 
 #[tauri::command]
@@ -239,7 +242,7 @@ fn show_main(app: &tauri::AppHandle) {
 }
 
 /// 选人阶段自动展开：显示主窗、收起球，但不抢焦点，避免打断选人操作
-fn expand_main(app: &tauri::AppHandle) {
+pub(crate) fn expand_main(app: &tauri::AppHandle) {
     if let Some(ball) = app.get_webview_window("ball") {
         let _ = ball.hide();
     }
@@ -250,10 +253,83 @@ fn expand_main(app: &tauri::AppHandle) {
     }
 }
 
-/// 悬浮球点击后展开完整界面
+/// 手动刷新开局三张英雄牌：收起助手 → 截屏 OCR → 展开并返回牌面排名
 #[tauri::command]
-fn expand_from_ball(app: tauri::AppHandle) {
+fn refresh_champ_cards(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Vec<data::ChampionRank> {
+    let can_detect = state
+        .runtime
+        .lock()
+        .map(|rt| rt.state.phase == "ChampSelect" && rt.state.mode == "mayhem")
+        .unwrap_or(false);
+    if !can_detect {
+        return Vec::new();
+    }
+
+    // 助手会挡住牌面，先收起再截图
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    if let Some(ball) = app.get_webview_window("ball") {
+        let _ = ball.hide();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let ids = vision::ocr_screen()
+        .map(|text| data::find_champions_in_text(&text))
+        .unwrap_or_default();
+    let ids: Vec<i32> = ids.into_iter().take(3).map(|id| id as i32).collect();
+    let board = data::champion_board(&ids);
+
     show_main(&app);
+    board
+}
+
+/// 悬浮球点击：如果刚好是符文等级且满血，截屏 OCR 出三张卡再展开
+#[tauri::command]
+fn expand_from_ball(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Option<Vec<data::AugmentView>> {
+    let ready = state.live.lock().map(|s| s.ready).unwrap_or(false);
+
+    let mut picks = Vec::new();
+    if ready {
+        if let Some(text) = vision::ocr_screen() {
+            let ids = data::find_augments_in_text(&text);
+            if ids.len() >= 3 {
+                let (champion_id, mode) = {
+                    let rt = state.runtime.lock().unwrap();
+                    (rt.state.champion_id, rt.state.mode.clone())
+                };
+                if let Some(champion_id) = champion_id {
+                    let mode = if mode.is_empty() {
+                        "mayhem".to_string()
+                    } else {
+                        mode
+                    };
+                    picks = data::augment_picks(champion_id, &ids[..3], &mode);
+                    picks.truncate(3);
+                }
+            }
+        }
+    }
+
+    if picks.len() >= 3 {
+        if let Ok(mut guard) = state.live.lock() {
+            guard.consume();
+        }
+        let _ = app.emit("augment-options", &picks);
+    }
+
+    show_main(&app);
+    if picks.is_empty() {
+        None
+    } else {
+        Some(picks)
+    }
 }
 
 /// 托盘图标兜底：临时画一个金色圆点，避免默认图标缺失时托盘不可见
@@ -367,6 +443,7 @@ fn toggle_floating_window(app: &tauri::AppHandle) {
 pub fn run() {
     let runtime = Arc::new(Mutex::new(lcu::Runtime::new()));
     let pending_update: Arc<Mutex<Option<PendingUpdate>>> = Arc::new(Mutex::new(None));
+    let live_state: Arc<Mutex<live::LiveState>> = Arc::new(Mutex::new(live::LiveState::default()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -383,6 +460,7 @@ pub fn run() {
         .manage(AppState {
             runtime: runtime.clone(),
             pending_update: pending_update.clone(),
+            live: live_state.clone(),
         })
         .setup(move |app| {
             // F1 全局热键：选人/对局中都能把工具呼到最前
@@ -396,6 +474,9 @@ pub fn run() {
 
             // 每次打开软件都开一条后台线程静默查更新，有结果再提示用户
             spawn_update_check(app.handle().clone(), pending_update.clone());
+
+            // 对局中轮询 Live Client Data：记录等级/满血，供悬浮球点击时判断符文窗口
+            live::spawn(live_state.clone());
 
             // 托盘图标：关掉主窗口后程序仍驻留在任务栏右下角
             if let Err(err) = setup_tray(app) {
@@ -450,6 +531,7 @@ pub fn run() {
             get_champion_board,
             get_pending_update,
             expand_from_ball,
+            refresh_champ_cards,
             quit_app
         ])
         .run(tauri::generate_context!())
