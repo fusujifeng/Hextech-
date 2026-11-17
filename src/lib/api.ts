@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { ChampionBrief, LcuState, Meta, Recommendation } from "./types";
+import type { ChampionBrief, ChampionRank, LcuState, Meta, Recommendation } from "./types";
 
 export const getLcuState = () => invoke<LcuState>("get_lcu_state");
 
@@ -11,6 +11,10 @@ export const getRecommendation = (championId: number, mode: string) =>
 export const listChampions = () => invoke<ChampionBrief[]>("list_champions");
 
 export const getMeta = () => invoke<Meta>("get_meta");
+
+/** 当前英雄 + 备战席，按 OP.GG 强度排序 */
+export const getChampionBoard = (ids: number[]) =>
+  invoke<ChampionRank[]>("get_champion_board", { ids });
 
 export const onLcuState = (cb: (state: LcuState) => void): Promise<UnlistenFn> =>
   listen<LcuState>("lcu-state", (event) => cb(event.payload));

@@ -3,7 +3,7 @@
 //! 设计要点：
 //! - 凭证发现三路兜底：进程命令行 → lockfile → 客户端日志（国服 WeGame 常态）。
 //! - 端口 / token 每次客户端重启都会轮换，因此连接失败时丢弃凭证并重新发现。
-//! - 每 500ms 拉一次 gameflow-phase，只在选人阶段才去读 champ-select 会话。
+//! - 选人阶段前 5 秒用 100ms / 200ms 加速轮询（客户端逐个放出备战席英雄），其余 500ms。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -17,9 +17,17 @@ use tauri::{AppHandle, Emitter};
 
 use crate::data;
 
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const RESCAN_INTERVAL: Duration = Duration::from_secs(2);
 const EVENT_NAME: &str = "lcu-state";
+
+/// 常规轮询间隔（选人后期、其他阶段）
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// 选人刚开始的 2 秒：客户端在逐个放出备战席英雄，加速到 100ms
+const POLL_FAST: Duration = Duration::from_millis(100);
+/// 选人第 2–5 秒：200ms
+const POLL_MEDIUM: Duration = Duration::from_millis(200);
+const POLL_FAST_WINDOW: Duration = Duration::from_secs(2);
+const POLL_MEDIUM_WINDOW: Duration = Duration::from_secs(5);
 
 /// 暴露给前端的完整状态快照。
 #[derive(Clone, Default, Serialize)]
@@ -38,6 +46,8 @@ pub struct State {
     pub champion_alias: Option<String>,
     pub bench_enabled: bool,
     pub bench_count: usize,
+    /// 备战席（重随池）里的英雄 id，按客户端顺序
+    pub bench_champion_ids: Vec<i32>,
     pub updated_at: u64,
     pub error: Option<String>,
 }
@@ -45,7 +55,7 @@ pub struct State {
 impl State {
     fn fingerprint(&self) -> String {
         format!(
-            "{}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{}|{:?}",
+            "{}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{}|{:?}|{:?}",
             self.connected,
             self.phase,
             self.queue_id,
@@ -55,6 +65,7 @@ impl State {
             self.champion_name,
             self.bench_enabled,
             self.bench_count,
+            self.bench_champion_ids,
             self.error,
         )
     }
@@ -107,6 +118,47 @@ fn offline(msg: &str) -> State {
         updated_at: now_ms(),
         ..State::default()
     }
+}
+
+/// 诊断用：选人会话里备战席相关字段变化时，把原始 JSON 记到本地日志。
+/// 客户端字段改名时（benchChampions / benchChampionIds）能直接从日志里看出来。
+fn log_bench_sample(session: &Value) {
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+
+    static LAST: OnceLock<Mutex<String>> = OnceLock::new();
+
+    let sample = serde_json::json!({
+        "keys": session.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+        "benchEnabled": session.get("benchEnabled").cloned().unwrap_or(Value::Null),
+        "benchChampions": session.get("benchChampions").cloned().unwrap_or(Value::Null),
+        "benchChampionIds": session.get("benchChampionIds").cloned().unwrap_or(Value::Null),
+    });
+    let text = sample.to_string();
+
+    let lock = LAST.get_or_init(|| Mutex::new(String::new()));
+    let Ok(mut last) = lock.lock() else {
+        return;
+    };
+    if *last == text {
+        return;
+    }
+    *last = text.clone();
+    drop(last);
+
+    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let dir = dir.join("com.chenhang.aramhelper");
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("lcu-session.log"))
+    else {
+        return;
+    };
+    let _ = writeln!(file, "{text}");
 }
 
 // ── 凭证发现 ─────────────────────────────────────────────────────────
@@ -283,6 +335,11 @@ fn log_dirs(install: &std::path::Path) -> Vec<PathBuf> {
 // ── 轮询主循环 ───────────────────────────────────────────────────────
 
 pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
+    // 本次选人阶段从何时开始：用来决定 100ms / 200ms / 500ms 分档轮询
+    let mut champ_select_since: Option<Instant> = None;
+    // 是否已在选人阶段自动展开过（只在进入选人时展开一次）
+    let mut was_champ_select = false;
+
     loop {
         ensure_credentials(&rt).await;
 
@@ -334,6 +391,14 @@ pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
             }
         }
 
+        // 进入选人阶段时把主窗口自动展开（仅海克斯 / 极地大乱斗，不抢焦点）
+        let in_champ_select =
+            next.phase == "ChampSelect" && (next.mode == "mayhem" || next.mode == "aram");
+        if in_champ_select && !was_champ_select {
+            crate::expand_main(&app);
+        }
+        was_champ_select = in_champ_select;
+
         let changed = {
             let mut g = rt.lock().unwrap();
             let changed = g.state.fingerprint() != next.fingerprint();
@@ -344,7 +409,21 @@ pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
             let _ = app.emit(EVENT_NAME, &next);
         }
 
-        tokio::time::sleep(POLL_INTERVAL).await;
+        // 选人刚开始的几秒，客户端是逐个放出备战席英雄的：
+        // 前 2 秒 100ms 一次，2–5 秒 200ms 一次，之后回到 500ms。
+        if next.phase == "ChampSelect" {
+            champ_select_since.get_or_insert_with(Instant::now);
+        } else {
+            champ_select_since = None;
+        }
+
+        let interval = match champ_select_since {
+            Some(started) if started.elapsed() < POLL_FAST_WINDOW => POLL_FAST,
+            Some(started) if started.elapsed() < POLL_MEDIUM_WINDOW => POLL_MEDIUM,
+            _ => POLL_INTERVAL,
+        };
+
+        tokio::time::sleep(interval).await;
     }
 }
 
@@ -460,11 +539,38 @@ async fn probe(client: &reqwest::Client, creds: &Credentials) -> Result<State, S
                 .get("benchEnabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            state.bench_count = session
+
+            // 备战席（大乱斗 / 海克斯大乱斗的重随池）。
+            // 客户端不同版本给的是 `benchChampions`（对象数组）或 `benchChampionIds`（id 数组），两个都读。
+            let mut bench: Vec<i32> = session
+                .get("benchChampions")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|c| c.get("championId").and_then(Value::as_i64))
+                        .filter(|id| *id > 0)
+                        .map(|id| id as i32)
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for id in session
                 .get("benchChampionIds")
                 .and_then(Value::as_array)
-                .map(|a| a.len())
-                .unwrap_or(0);
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_i64)
+                .filter(|id| *id > 0)
+                .map(|id| id as i32)
+            {
+                if !bench.contains(&id) {
+                    bench.push(id);
+                }
+            }
+
+            log_bench_sample(&session);
+            state.bench_champion_ids = bench;
+            state.bench_count = state.bench_champion_ids.len();
 
             if let Some(cell) = session.get("localPlayerCellId").and_then(Value::as_i64) {
                 if let Some(team) = session.get("myTeam").and_then(Value::as_array) {

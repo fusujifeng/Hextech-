@@ -28,6 +28,16 @@ body {
   user-select: none;
 }
 
+/* 悬浮球窗口：整窗透明，只画中间的圆 */
+html.ball-mode,
+body.ball-mode {
+  background: transparent;
+}
+
+body.ball-mode {
+  overflow: hidden;
+}
+
 /* 细金色滚动条 */
 ::-webkit-scrollbar {
   width: 6px;

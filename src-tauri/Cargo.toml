@@ -1,6 +1,6 @@
 [package]
 name = "aram-mayhem-helper"
-version = "0.1.0"
+version = "2026.11.17"
 description = "英雄联盟海克斯大乱斗出装助手"
 authors = ["chenhang"]
 edition = "2024"
@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }

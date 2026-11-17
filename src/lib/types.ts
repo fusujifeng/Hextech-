@@ -15,6 +15,8 @@ export interface LcuState {
   championAlias: string | null;
   benchEnabled: boolean;
   benchCount: number;
+  /** 备战席（重随池）英雄 id */
+  benchChampionIds: number[];
   updatedAt: number;
   error: string | null;
 }
@@ -37,6 +39,10 @@ export interface AugmentView {
   popular: number | null;
   /** 名次，从 1 开始 */
   rank: number;
+  /** 同品质内的 OP.GG 排名（1 = 该品质最强） */
+  tierRank: number;
+  /** 该品质有数据的强化总数 */
+  tierTotal: number;
   desc: string;
 }
 
@@ -88,6 +94,19 @@ export interface ChampionBrief {
   nicknames: string[];
   /** 本地图标路径，例如 /icons/champions/104.png */
   icon: string;
+}
+
+/** 选人强度榜条目：全英雄按 OP.GG 胜率降序排名。 */
+export interface ChampionRank {
+  id: number;
+  name: string;
+  title: string;
+  alias: string;
+  tier: string;
+  winRate: number;
+  icon: string;
+  /** 全英雄排名，1 = 最强 */
+  rank: number;
 }
 
 export interface Meta {

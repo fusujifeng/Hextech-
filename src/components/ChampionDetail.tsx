@@ -218,23 +218,24 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
         </div>
 
         <div className="flex items-center gap-2 px-2 text-[9px] tracking-wider text-white/25">
-          <span className="w-5 text-right">#</span>
+          <span className="w-9 text-right">档内</span>
           <span className="h-8 w-8" />
           <span className="min-w-0 flex-1">强化符文</span>
-          <span className="w-[46px] text-right">选用率</span>
           <span className="w-[42px] text-right">强度</span>
         </div>
       </div>
 
       <div className="space-y-[3px]">
-        {list.map((augment, index) => (
+        {list.map((augment) => (
           <div
             key={augment.id}
             title={augment.desc}
             className="flex items-center gap-2 rounded-md border border-white/5 bg-white/2 px-2 py-1.5 transition hover:border-gold-400/30 hover:bg-white/5"
           >
-            <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-white/30">
-              {index + 1}
+            <span className="w-9 shrink-0 text-right text-[10px] tabular-nums text-white/45">
+              {augment.tierTotal > 0
+                ? `${augment.tierRank}/${augment.tierTotal}`
+                : "—"}
             </span>
             <img
               src={augment.icon}
@@ -259,9 +260,6 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
                 {augment.desc || "—"}
               </div>
             </div>
-            <span className="w-[46px] shrink-0 text-right text-[11px] tabular-nums text-white/55">
-              {augment.popular != null ? `${augment.popular}%` : "—"}
-            </span>
             <span className="w-[42px] shrink-0 text-right text-[11px] font-medium tabular-nums text-gold-300/90">
               {augment.performance != null ? fmt(augment.performance) : "—"}
             </span>

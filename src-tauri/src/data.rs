@@ -113,6 +113,10 @@ pub struct AugmentView {
     pub popular: Option<f64>,
     /// 名次，从 1 开始（按 OP.GG 强度从高到低）
     pub rank: usize,
+    /// 同品质内的 OP.GG 排名（1 = 该品质最强，例如「黄金第 3」）
+    pub tier_rank: usize,
+    /// 该品质有数据的强化总数
+    pub tier_total: usize,
     pub desc: String,
 }
 
@@ -169,6 +173,21 @@ pub struct ChampionBrief {
     pub win_rate: f64,
     pub nicknames: Vec<String>,
     pub icon: String,
+}
+
+/// 选人界面「强度榜」条目：全英雄按 OP.GG 胜率降序排名。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChampionRank {
+    pub id: i32,
+    pub name: String,
+    pub title: String,
+    pub alias: String,
+    pub tier: String,
+    pub win_rate: f64,
+    pub icon: String,
+    /// 全英雄排名，1 = 最强
+    pub rank: usize,
 }
 
 #[derive(Serialize, Clone)]
@@ -232,6 +251,8 @@ fn augment_view(id: i64) -> Option<AugmentView> {
         performance: None,
         popular: None,
         rank: 0,
+        tier_rank: 0,
+        tier_total: 0,
         desc: a.desc.clone(),
     })
 }
@@ -277,6 +298,72 @@ pub fn champions() -> Vec<ChampionBrief> {
     list
 }
 
+/// 全英雄强度排序的原料：胜率降序，同胜率看样本量，最后按 id 保证顺序稳定。
+struct Rated {
+    id: i32,
+    win_rate: f64,
+    games: i64,
+}
+
+static RATED: LazyLock<Vec<Rated>> = LazyLock::new(|| {
+    let mut list: Vec<Rated> = RESG
+        .champions
+        .iter()
+        .filter_map(|(id, c)| {
+            let id: i32 = id.parse().ok()?;
+            let games = RECS
+                .champions
+                .get(&id.to_string())
+                .map(|r| r.games)
+                .unwrap_or(0);
+            Some(Rated {
+                id,
+                win_rate: c.win_rate,
+                games,
+            })
+        })
+        .collect();
+
+    list.sort_by(|a, b| {
+        b.win_rate
+            .partial_cmp(&a.win_rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.games.cmp(&a.games))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    list
+});
+
+/// 英雄 id → 全英雄排名（1 = 最强），启动时算一次。
+static RANK_OF: LazyLock<HashMap<i32, usize>> =
+    LazyLock::new(|| RATED.iter().enumerate().map(|(i, r)| (r.id, i + 1)).collect());
+
+/// 选人界面用：把「当前英雄 + 备战席英雄」按 OP.GG 强度排序，并带上全英雄排名。
+pub fn champion_board(ids: &[i32]) -> Vec<ChampionRank> {
+    let mut seen = std::collections::HashSet::new();
+
+    let mut list: Vec<ChampionRank> = ids
+        .iter()
+        .filter(|id| seen.insert(**id))
+        .filter_map(|id| {
+            let c = RESG.champions.get(&id.to_string())?;
+            Some(ChampionRank {
+                id: *id,
+                name: c.title.clone(),
+                title: c.name.clone(),
+                alias: c.alias.clone(),
+                tier: c.tier.clone(),
+                win_rate: c.win_rate,
+                icon: c.icon.clone(),
+                rank: *RANK_OF.get(id)?,
+            })
+        })
+        .collect();
+
+    list.sort_by_key(|c| c.rank);
+    list
+}
+
 fn mode_label(mode: &str) -> &'static str {
     match mode {
         "mayhem" => "海克斯大乱斗",
@@ -310,7 +397,7 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
         .ok_or_else(|| format!("{} 暂无统计数据（可能刚上线或样本不足）", champion.name))?;
 
     // 已按 OP.GG performance 从高到低排好序，rank 直接取下标 + 1
-    let augments: Vec<AugmentView> = rec
+    let mut augments: Vec<AugmentView> = rec
         .augments
         .iter()
         .enumerate()
@@ -325,6 +412,20 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
             Some(view)
         })
         .collect();
+
+    // 档内排名：白银 / 黄金 / 棱彩各自按 OP.GG 强度从高到低编号
+    // （列表本身已是强度降序，所以同品质按出现顺序递增即可）
+    let mut totals: HashMap<u8, usize> = HashMap::new();
+    for augment in &augments {
+        *totals.entry(augment.quality).or_insert(0) += 1;
+    }
+    let mut seen: HashMap<u8, usize> = HashMap::new();
+    for augment in augments.iter_mut() {
+        let count = seen.entry(augment.quality).or_insert(0);
+        *count += 1;
+        augment.tier_rank = *count;
+        augment.tier_total = totals.get(&augment.quality).copied().unwrap_or(0);
+    }
 
     let mut nerf: Vec<(String, String)> = rec
         .nerf
@@ -408,6 +509,57 @@ mod tests {
         for c in champions() {
             assert!(!c.name.is_empty());
             assert!(!c.title.is_empty());
+        }
+    }
+
+    #[test]
+    fn augment_tier_ranks_are_within_quality() {
+        let rec = recommendation(222, "mayhem").expect("jinx");
+
+        for quality in 1..=3u8 {
+            let mut ranks: Vec<usize> = rec
+                .augments
+                .iter()
+                .filter(|a| a.quality == quality)
+                .map(|a| a.tier_rank)
+                .collect();
+            ranks.sort_unstable();
+            assert_eq!(
+                ranks,
+                (1..=ranks.len()).collect::<Vec<_>>(),
+                "品质 {quality} 的档内名次应从 1 连续编号"
+            );
+        }
+
+        for augment in &rec.augments {
+            let total = rec
+                .augments
+                .iter()
+                .filter(|a| a.quality == augment.quality)
+                .count();
+            assert_eq!(augment.tier_total, total, "档内总数应与该品质数量一致");
+        }
+    }
+
+    #[test]
+    fn board_is_sorted_deduped_and_ranked() {
+        // 1 = 安妮, 22 = 艾希；999999 不存在，应被忽略
+        let rows = champion_board(&[1, 1, 22, 999_999]);
+
+        assert!(rows.len() >= 2, "应至少返回两个真实英雄");
+        assert!(rows.iter().all(|r| r.id != 999_999), "未知 id 应被忽略");
+        assert_eq!(
+            rows.iter().filter(|r| r.id == 1).count(),
+            1,
+            "重复 id 应去重"
+        );
+        assert!(
+            rows.windows(2).all(|w| w[0].rank < w[1].rank),
+            "必须按排名从强到弱排列"
+        );
+
+        for row in &rows {
+            assert_eq!(Some(row.rank), RANK_OF.get(&row.id).copied());
         }
     }
 }

@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import * as api from "./lib/api";
-import { checkForUpdate, installUpdate } from "./lib/updater";
+import {
+  checkForUpdate,
+  getPendingUpdate,
+  installUpdate,
+  onUpdateAvailable,
+  type UpdateState,
+} from "./lib/updater";
+import { UpdatePrompt } from "./components/UpdatePrompt";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { ChampSelectBoard } from "./components/ChampSelectBoard";
 import { ChampionDetail } from "./components/ChampionDetail";
 import { ChampionPicker } from "./components/ChampionPicker";
 import {
@@ -11,12 +20,6 @@ import {
   type Meta,
   type Recommendation,
 } from "./lib/types";
-
-type UpdateState =
-  | { status: "idle" | "checking" | "latest" }
-  | { status: "available"; version: string; notes: string }
-  | { status: "downloading"; percent: number }
-  | { status: "error"; message: string; manual: boolean };
 
 function IconPin({ active }: { active: boolean }) {
   return (
@@ -32,6 +35,15 @@ function IconSearch() {
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
       <circle cx="11" cy="11" r="6" />
       <path d="m16 16 4 4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconGear() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
     </svg>
   );
 }
@@ -55,6 +67,8 @@ export default function App() {
 
   const [pinned, setPinned] = useState(false);
   const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 订阅 Rust 侧 500ms 轮询推送的状态
   useEffect(() => {
@@ -87,15 +101,41 @@ export default function App() {
     api.isPinned().then(setPinned).catch(() => undefined);
   }, []);
 
-  // 启动后静默检查一次更新；失败不打扰用户（发布地址可能尚未配置）
+  // 启动时 Rust 已单开线程静默查更新；这里只取结果，有新版就问用户要不要更新。
+  // 两条路都接：主动取一次（检查早于挂载）+ 订阅事件（检查晚于挂载）。
   useEffect(() => {
-    checkForUpdate()
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    const offer = (info: { version: string; notes: string }) => {
+      if (disposed) return;
+      setUpdate({ status: "available", version: info.version, notes: info.notes });
+      setUpdatePromptOpen(true);
+    };
+
+    getPendingUpdate()
       .then((info) => {
-        if (info) setUpdate({ status: "available", version: info.version, notes: info.notes });
-        else setUpdate({ status: "latest" });
+        if (info) offer(info);
       })
-      .catch(() => setUpdate({ status: "error", message: "检查更新失败", manual: false }));
+      .catch(() => undefined);
+
+    onUpdateAvailable(offer)
+      .then((un) => {
+        if (disposed) un();
+        else unlisten = un;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
+
+  // 更新确认框出现时收起设置面板，避免两层遮罩叠在一起
+  useEffect(() => {
+    if (updatePromptOpen) setSettingsOpen(false);
+  }, [updatePromptOpen]);
 
   const liveMode = lcu && (lcu.mode === "mayhem" || lcu.mode === "aram") ? lcu.mode : null;
   const liveChampionId = liveMode ? lcu?.championId ?? null : null;
@@ -140,26 +180,45 @@ export default function App() {
     }
   }, [pinned]);
 
+  const closeUpdatePrompt = useCallback(() => setUpdatePromptOpen(false), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+
   const handleInstall = useCallback(async () => {
-    setUpdate({ status: "downloading", percent: -1 });
+    const version =
+      update.status === "available" || update.status === "downloading"
+        ? update.version
+        : update.status === "error"
+          ? update.version ?? ""
+          : "";
+
+    // 无论在设置里还是弹窗里点更新，都用同一个进度框展示
+    setUpdatePromptOpen(true);
+    setUpdate({ status: "downloading", version, percent: -1 });
     try {
-      await installUpdate((percent) => setUpdate({ status: "downloading", percent }));
-    } catch (e) {
-      setUpdate({ status: "error", message: typeof e === "string" ? e : "更新安装失败", manual: true });
+      await installUpdate((percent) => setUpdate({ status: "downloading", version, percent }));
+    } catch {
+      setUpdate({
+        status: "error",
+        kind: "install",
+        version: version || undefined,
+        message: "下载或安装更新失败，请检查网络后重试；当前版本仍可正常使用。",
+      });
     }
-  }, []);
+  }, [update]);
 
   const checkUpdateManually = useCallback(async () => {
     setUpdate({ status: "checking" });
     try {
       const info = await checkForUpdate();
-      setUpdate(
-        info
-          ? { status: "available", version: info.version, notes: info.notes }
-          : { status: "latest" },
-      );
+      if (info) {
+        setUpdate({ status: "available", version: info.version, notes: info.notes });
+        setUpdatePromptOpen(true);
+      } else {
+        setUpdate({ status: "latest" });
+      }
     } catch {
-      setUpdate({ status: "error", message: "无法连接到更新服务器", manual: true });
+      // 手动检查失败只在底栏 / 设置里提示，不弹窗打断
+      setUpdate({ status: "error", kind: "manual", message: "无法连接到更新服务器" });
     }
   }, []);
 
@@ -199,6 +258,9 @@ export default function App() {
   }, [lcu, phaseLabel]);
 
   const showBuild = championId !== null && rec !== null;
+  // 选人阶段展示「当前英雄 + 备战席」的强度榜（大乱斗 / 海克斯大乱斗才有备战席）
+  const inChampSelect =
+    lcu?.phase === "ChampSelect" && (lcu.mode === "mayhem" || lcu.mode === "aram");
 
   return (
     <div className="relative flex h-full flex-col">
@@ -237,41 +299,27 @@ export default function App() {
           >
             <IconSearch />
           </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="设置"
+            className={`rounded-md border p-1.5 transition ${
+              update.status === "available"
+                ? "border-gold-400/60 bg-gold-400/15 text-gold-300"
+                : "border-white/10 text-white/45 hover:border-gold-400/40 hover:text-gold-200"
+            }`}
+          >
+            <IconGear />
+          </button>
         </div>
       </header>
 
       {/* 主内容 */}
       <main className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
-        {update.status === "available" && (
-          <div className="animate-fade-up flex items-center justify-between gap-2 rounded-lg border border-gold-400/35 bg-gold-400/10 px-2.5 py-2">
-            <div className="min-w-0">
-              <div className="text-[12px] text-gold-200">发现新版本 v{update.version}</div>
-              <div className="truncate text-[10px] text-white/40">静默安装，完成后自动重启</div>
-            </div>
-            <button
-              onClick={handleInstall}
-              className="shrink-0 rounded-md bg-gold-400 px-2.5 py-1 text-[11px] font-medium text-[#1a1206] transition hover:bg-gold-300"
-            >
-              立即更新
-            </button>
-          </div>
-        )}
-
-        {update.status === "downloading" && (
-          <div className="rounded-lg border border-white/10 bg-white/4 px-2.5 py-2">
-            <div className="flex items-center justify-between text-[11px] text-white/60">
-              <span>正在下载更新…</span>
-              <span className="tabular-nums">
-                {update.percent >= 0 ? `${update.percent}%` : ""}
-              </span>
-            </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full bg-gold-400 transition-all"
-                style={{ width: `${update.percent >= 0 ? update.percent : 12}%` }}
-              />
-            </div>
-          </div>
+        {inChampSelect && (
+          <ChampSelectBoard
+            championId={lcu?.championId ?? null}
+            benchIds={lcu?.benchChampionIds ?? []}
+          />
         )}
 
         {previewId !== null && (
@@ -338,19 +386,51 @@ export default function App() {
           <span className="text-white/20"> · F1 唤起</span>
         </span>
         <button
-          onClick={checkUpdateManually}
-          className="transition hover:text-gold-300"
-          title={update.status === "error" ? update.message : "检查更新"}
+          onClick={() => {
+            if (update.status === "available" || update.status === "downloading") {
+              setUpdatePromptOpen(true);
+            } else {
+              checkUpdateManually();
+            }
+          }}
+          className={`transition hover:text-gold-300 ${
+            update.status === "available" ? "text-gold-300" : ""
+          }`}
+          title={
+            (update.status === "error" && update.message) ||
+            (update.status === "available" ? "查看更新详情" : "检查更新")
+          }
         >
           {update.status === "checking"
             ? "检查中…"
             : update.status === "latest"
               ? "已是最新版"
-              : update.status === "error" && update.manual
-                ? "更新检查失败"
-                : "检查更新"}
+              : update.status === "available"
+                ? `新版本 v${update.version}`
+                : update.status === "downloading"
+                  ? `更新中 ${update.percent >= 0 ? `${update.percent}%` : "…"}`
+                  : update.status === "error"
+                    ? "检查失败"
+                    : "检查更新"}
         </button>
       </footer>
+
+      <UpdatePrompt
+        open={updatePromptOpen}
+        update={update}
+        onDismiss={closeUpdatePrompt}
+        onInstall={handleInstall}
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        appVersion={appVersion}
+        meta={meta}
+        update={update}
+        onClose={closeSettings}
+        onCheck={checkUpdateManually}
+        onInstall={handleInstall}
+      />
 
       <ChampionPicker
         open={pickerOpen}

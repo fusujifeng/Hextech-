@@ -28,3 +28,6 @@ src-tauri/keys/
 
 # 数据抓取缓存
 scripts/.cache/
+
+# 本地启动时使用的 WebView2 配置目录
+.webview2-profile/
