@@ -188,7 +188,11 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
     return augments.filter((a) => {
       if (quality !== 0 && a.quality !== quality) return false;
       if (!q) return true;
-      return a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q);
+      return (
+        a.name.toLowerCase().includes(q) ||
+        a.py.toLowerCase().includes(q) ||
+        a.desc.toLowerCase().includes(q)
+      );
     });
   }, [augments, query, quality]);
 
@@ -206,7 +210,7 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
-            placeholder="搜索强化符文"
+            placeholder="搜索强化符文 / 首字母"
             className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-[12px] text-white/90 outline-none placeholder:text-white/30 focus:border-gold-400/50"
           />
           <span className="shrink-0 text-[10px] text-white/30">{list.length} 个</span>

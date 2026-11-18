@@ -31,6 +31,8 @@ export interface AugmentView {
   id: number;
   name: string;
   icon: string;
+  /** 拼音首字母，搜索用：神圣干预 → ssgy */
+  py: string;
   /** 1 = 白银, 2 = 黄金, 3 = 棱彩 */
   quality: number;
   /** OP.GG 梯度：0=S, 1=A, 2=B, 3=C, 4=D, 5=E；255 = 无数据 */

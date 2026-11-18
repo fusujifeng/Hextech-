@@ -21,6 +21,7 @@ import { readFile, writeFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pinyin } from "pinyin-pro";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = resolve(root, "src-tauri/data");
@@ -368,8 +369,11 @@ async function main() {
     if (meta) {
       // resg 列表页对新强化常给占位名「海克斯 #xxxx」，有 OP.GG 真名时优先用 OP.GG
       const placeholder = !meta.name || /^海克斯 #\d+$/.test(meta.name);
+      const name = (placeholder ? fallback?.name : meta.name) || meta.name || `海克斯 #${id}`;
       augmentMeta[id] = {
-        name: (placeholder ? fallback?.name : meta.name) || meta.name || `海克斯 #${id}`,
+        name,
+        // 首字母，供搜索用：神圣干预 → ssgy
+        py: pinyin(name, { pattern: "first", toneType: "none", type: "array" }).join(""),
         icon: icon(meta.ip),
         quality: Number(meta.quality) || 0,
         tier: meta.tier ?? "",
@@ -380,6 +384,11 @@ async function main() {
       // resg 没有收录、但 OP.GG 有数据的新强化：用 OP.GG 的名称和图标
       augmentMeta[id] = {
         name: fallback.name || `海克斯 #${id}`,
+        py: pinyin(fallback.name || `海克斯 #${id}`, {
+          pattern: "first",
+          toneType: "none",
+          type: "array",
+        }).join(""),
         icon: fallback.icon,
         quality: rarityToQuality(fallback.rarity),
         tier: "",

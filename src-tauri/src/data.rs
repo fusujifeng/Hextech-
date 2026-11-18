@@ -58,6 +58,9 @@ struct ItemMeta {
 #[allow(dead_code)]
 struct AugMeta {
     name: String,
+    /// 名称的拼音首字母，例如「神圣干预」→ ssgy
+    #[serde(default)]
+    py: String,
     icon: String,
     quality: u8,
     tier: String,
@@ -108,6 +111,8 @@ pub struct AugmentView {
     pub id: i64,
     pub name: String,
     pub icon: String,
+    /// 拼音首字母（搜索用），例如 ssgy
+    pub py: String,
     /// 1 = 白银, 2 = 黄金, 3 = 棱彩
     pub quality: u8,
     /// OP.GG 梯度：0=S, 1=A, 2=B, 3=C, 4=D, 5=E；255 = 无数据
@@ -254,6 +259,7 @@ fn augment_view(id: i64) -> Option<AugmentView> {
         id,
         name: a.name.clone(),
         icon: a.icon.clone(),
+        py: a.py.clone(),
         quality: a.quality,
         grade: 0,
         performance: None,
@@ -660,6 +666,16 @@ mod tests {
         let hit = picks.iter().find(|p| p.id == target.id).expect("档内排名");
         assert!(hit.tier_total > 0);
         assert!(hit.tier_rank >= 1);
+    }
+
+    #[test]
+    fn augment_pinyin_initials_exist() {
+        let a = RESG
+            .augments
+            .values()
+            .find(|a| a.name == "神圣干预")
+            .expect("神圣干预");
+        assert_eq!(a.py, "ssgy");
     }
 
     #[test]
