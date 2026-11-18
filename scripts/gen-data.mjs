@@ -110,14 +110,19 @@ async function fetchOpggAugments(alias) {
     return data
       .filter(
         (a) =>
-          // OP.GG 的 tier 5 是「没有梯度 / 已移除」的占位数据（performance 常为 170、popular≈0），
-          // tier 0 是未知条目；只保留真正参与排名的 1–4 档，避免把已移除强化排到第一
-          Number(a.tier) >= 1 &&
+          // OP.GG 的 tier 0–4 是真实的 S/A/B/C/D 梯度（0 = S），
+          // tier 5 是「已移除 / 无排名 / 样本不足」的占位数据（performance 常为 170、popular≈0）。
+          // 之前只保留 1–4 把 S 档也过滤掉了，导致页面上的 S 强化全部消失。
+          Number(a.tier) >= 0 &&
           Number(a.tier) <= 4 &&
           Number(a.popular) > 0 &&
           Number(a.performance) > 0,
       )
-      .sort((a, b) => b.performance - a.performance)
+      // OP.GG 页面的顺序：先按梯度 S→D，同梯度内按选用率从高到低
+      .sort(
+        (a, b) =>
+          Number(a.tier) - Number(b.tier) || Number(b.popular) - Number(a.popular),
+      )
       .map((a) => ({
         id: Number(a.id),
         performance: Number(a.performance),
@@ -337,8 +342,10 @@ async function main() {
     }
     const fallback = opggAugMeta.get(Number(id));
     if (meta) {
+      // resg 列表页对新强化常给占位名「海克斯 #xxxx」，有 OP.GG 真名时优先用 OP.GG
+      const placeholder = !meta.name || /^海克斯 #\d+$/.test(meta.name);
       augmentMeta[id] = {
-        name: meta.name || fallback?.name || `海克斯 #${id}`,
+        name: (placeholder ? fallback?.name : meta.name) || meta.name || `海克斯 #${id}`,
         icon: icon(meta.ip),
         quality: Number(meta.quality) || 0,
         tier: meta.tier ?? "",

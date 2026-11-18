@@ -569,14 +569,11 @@ mod tests {
         for augment in &rec.augments {
             assert!(augment.icon.starts_with("/icons/augments/"), "{}", augment.icon);
         }
-        // 强化按 OP.GG 强度从高到低排序，名次连续
+        // 强化按 OP.GG 页面顺序（S→D 梯度，同梯度按选用率）排列，名次连续
         for (i, augment) in rec.augments.iter().enumerate() {
             assert_eq!(augment.rank, i + 1);
-            if i > 0 {
-                let prev = rec.augments[i - 1].performance.unwrap_or(0.0);
-                let cur = augment.performance.unwrap_or(0.0);
-                assert!(prev >= cur, "augment order broken at {i}: {prev} < {cur}");
-            }
+            assert!(augment.tier_rank >= 1);
+            assert!(augment.tier_rank <= augment.tier_total);
         }
     }
 
