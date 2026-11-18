@@ -476,7 +476,7 @@ pub fn run() {
             spawn_update_check(app.handle().clone(), pending_update.clone());
 
             // 对局中轮询 Live Client Data：记录等级/满血，供悬浮球点击时判断符文窗口
-            live::spawn(live_state.clone());
+            live::spawn(live_state.clone(), runtime.clone());
 
             // 托盘图标：关掉主窗口后程序仍驻留在任务栏右下角
             if let Err(err) = setup_tray(app) {

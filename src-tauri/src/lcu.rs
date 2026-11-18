@@ -100,6 +100,14 @@ impl Runtime {
     pub fn snapshot(&self) -> State {
         self.state.clone()
     }
+
+    /// 对局中由 Live API 补认当前英雄：软件在选人之后才启动时也能加载
+    pub fn set_live_champion(&mut self, id: i32) {
+        if id > 0 && self.last_champion != Some(id) {
+            self.last_champion = Some(id);
+            self.last_champion_name = data::champion_name(id);
+        }
+    }
 }
 
 fn now_ms() -> u64 {

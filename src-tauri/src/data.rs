@@ -394,6 +394,27 @@ pub fn find_augments_in_text(text: &str) -> Vec<i64> {
     hits.into_iter().map(|(_, id)| id).collect()
 }
 
+/// 用 Data Dragon alias / 中文名 / 称号反查英雄 id。
+/// Live Client Data 给的是 `championName`（如 "Jinx"）或
+/// `rawChampionName`（"game_character_displayname_Jinx"）。
+pub fn champion_id_by_alias_or_name(key: &str) -> Option<i32> {
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let cleaned = key
+        .strip_prefix("game_character_displayname_")
+        .unwrap_or(key);
+    let lower = cleaned.to_lowercase();
+
+    for (id, meta) in RESG.champions.iter() {
+        if meta.alias.to_lowercase() == lower || meta.name == cleaned || meta.title == cleaned {
+            return id.parse::<i32>().ok();
+        }
+    }
+    None
+}
+
 /// 从 OCR 文本里找出英雄中文名（开局三选一英雄牌），按名字长度降序。
 pub fn find_champions_in_text(text: &str) -> Vec<i64> {
     let haystack = normalize_text(text);
@@ -632,6 +653,22 @@ mod tests {
         let hit = picks.iter().find(|p| p.id == target.id).expect("档内排名");
         assert!(hit.tier_total > 0);
         assert!(hit.tier_rank >= 1);
+    }
+
+    #[test]
+    fn resolves_champion_by_alias() {
+        assert_eq!(champion_id_by_alias_or_name("Jinx"), Some(222));
+        assert_eq!(
+            champion_id_by_alias_or_name("game_character_displayname_Jinx"),
+            Some(222)
+        );
+        assert_eq!(champion_id_by_alias_or_name("金克丝"), Some(222));
+        assert_eq!(champion_id_by_alias_or_name("卡牌大师"), Some(4));
+        assert_eq!(
+            champion_id_by_alias_or_name("game_character_displayname_TwistedFate"),
+            Some(4)
+        );
+        assert_eq!(champion_id_by_alias_or_name("不存在"), None);
     }
 
     #[test]
