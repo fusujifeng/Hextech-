@@ -26,6 +26,9 @@ static NICKNAMES: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(|| {
 #[derive(Deserialize)]
 struct Resg {
     version: String,
+    /// 生成这份数据时 OP.GG 的版本（强化梯度数据）
+    #[serde(rename = "opggVersion", default)]
+    opgg_version: String,
     #[serde(rename = "generatedAt")]
     generated_at: String,
     champions: HashMap<String, ChampMeta>,
@@ -194,6 +197,8 @@ pub struct ChampionRank {
 #[serde(rename_all = "camelCase")]
 pub struct Meta {
     pub version: String,
+    /// OP.GG 的强化数据版本（可能比 resg 新，如 resg 16.22 / OP.GG 16.23）
+    pub opgg_version: String,
     pub champion_count: usize,
     pub item_count: usize,
     pub augment_count: usize,
@@ -268,6 +273,7 @@ pub fn champion_name(id: i32) -> Option<String> {
 pub fn meta() -> Meta {
     Meta {
         version: RESG.version.clone(),
+        opgg_version: RESG.opgg_version.clone(),
         champion_count: RESG.champions.len(),
         item_count: RESG.items.len(),
         augment_count: RESG.augments.len(),

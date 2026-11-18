@@ -111,6 +111,8 @@ export interface ChampionRank {
 
 export interface Meta {
   version: string;
+  /** OP.GG 强化数据版本，可能比 resg 新 */
+  opggVersion?: string;
   championCount: number;
   itemCount: number;
   augmentCount: number;

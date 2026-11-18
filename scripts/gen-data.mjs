@@ -36,6 +36,8 @@ const UA =
 const args = process.argv.slice(2);
 const versionArg = args.indexOf("--version");
 const PINNED = versionArg !== -1 ? args[versionArg + 1] : null;
+const patchArg = args.indexOf("--patch");
+let OPGG_PATCH = patchArg !== -1 ? args[patchArg + 1] : null;
 const REFRESH = args.includes("--refresh");
 const CONCURRENCY = 6;
 
@@ -70,6 +72,24 @@ async function fetchText(url, cacheKey) {
 }
 
 /**
+ * 读取 OP.GG 当前的数据版本（页面上的「16.23版本」）。
+ * 可用 --patch 16.23 显式指定，未指定时自动探测。
+ */
+async function detectOpggPatch() {
+  try {
+    const res = await fetch(OPGG_PAGE, {
+      headers: { "user-agent": UA, "accept-language": "zh-CN,zh;q=0.9" },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/(\d{1,2}\.\d{1,2})\s*版本/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 抓 OP.GG 的单英雄「海克斯大乱斗 → 强化符文」页，解析内嵌的 RSC 数据。
  *
  * 页面里每个强化符文形如：
@@ -79,9 +99,11 @@ async function fetchText(url, cacheKey) {
  */
 async function fetchOpggAugments(alias) {
   const slug = alias.toLowerCase();
+  const patchQuery = OPGG_PATCH ? `?patch=${encodeURIComponent(OPGG_PATCH)}` : "";
+  const cacheKey = `opgg_${slug}${OPGG_PATCH ? `_${OPGG_PATCH}` : ""}.html`;
   let html;
   try {
-    html = await fetchText(`${OPGG_PAGE}/${slug}/augments`, `opgg_${slug}.html`);
+    html = await fetchText(`${OPGG_PAGE}/${slug}/augments${patchQuery}`, cacheKey);
   } catch (e) {
     console.warn(`  [!] OP.GG ${slug} 抓取失败: ${e.message}`);
     return null;
@@ -207,6 +229,9 @@ async function main() {
   const version = PINNED ?? versions[0]?.version;
   if (!version) throw new Error("无法获取数据版本");
   console.log(`resg 数据版本: ${version}（采集于 ${versions.find((v) => v.version === version)?.collectedAt ?? "?"}）`);
+
+  if (!OPGG_PATCH) OPGG_PATCH = await detectOpggPatch();
+  console.log(`OP.GG 数据版本: ${OPGG_PATCH ?? "当前版本"}（?patch=${OPGG_PATCH ?? "auto"}）`);
 
   const [champList, itemDict, augmentList] = await Promise.all([
     api(`/versions/${version}/champions.js`),
@@ -418,6 +443,7 @@ async function main() {
 
   const resg = {
     version,
+    opggVersion: OPGG_PATCH ?? "",
     collectedAt: versions.find((v) => v.version === version)?.collectedAt ?? "",
     generatedAt: new Date().toISOString(),
     champions: champMeta,

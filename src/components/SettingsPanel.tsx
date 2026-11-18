@@ -141,7 +141,10 @@ export function SettingsPanel({
           <dl className="divide-y divide-white/6 border-t border-white/6 text-[10.5px]">
             <div className="flex items-center justify-between gap-3 px-3 py-2">
               <dt className="shrink-0 text-white/40">数据版本</dt>
-              <dd className="truncate text-white/70">{meta?.version || "—"}</dd>
+              <dd className="truncate text-white/70">
+                {meta?.version || "—"}
+                {meta?.opggVersion ? ` / OP.GG ${meta.opggVersion}` : ""}
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-3 px-3 py-2">
               <dt className="shrink-0 text-white/40">数据来源</dt>

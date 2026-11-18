@@ -449,7 +449,13 @@ export default function App() {
         <span>
           {pinned ? "已置顶 · " : ""}
           v{appVersion || "0.1.0"}
-          {meta ? ` · 数据 ${meta.version}` : ""}
+          {meta
+            ? ` · 数据 ${meta.version}${
+                meta.opggVersion && meta.opggVersion !== meta.version
+                  ? ` / OP.GG ${meta.opggVersion}`
+                  : ""
+              }`
+            : ""}
           <span className="text-white/20"> · F1 唤起</span>
         </span>
         <button
