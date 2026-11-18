@@ -108,7 +108,15 @@ async function fetchOpggAugments(alias) {
     if (!Array.isArray(data) || data.length < 20) continue;
 
     return data
-      .filter((a) => Number(a.popular) > 0 && Number(a.performance) > 0)
+      .filter(
+        (a) =>
+          // OP.GG 的 tier 5 是「没有梯度 / 已移除」的占位数据（performance 常为 170、popular≈0），
+          // tier 0 是未知条目；只保留真正参与排名的 1–4 档，避免把已移除强化排到第一
+          Number(a.tier) >= 1 &&
+          Number(a.tier) <= 4 &&
+          Number(a.popular) > 0 &&
+          Number(a.performance) > 0,
+      )
       .sort((a, b) => b.performance - a.performance)
       .map((a) => ({
         id: Number(a.id),
