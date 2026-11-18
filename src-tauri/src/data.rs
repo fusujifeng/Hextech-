@@ -75,8 +75,8 @@ struct Recommendations {
     champions: HashMap<String, RecEntry>,
 }
 
-/// 强化条目紧凑格式：[id, 强度分, 选用率, 品质]
-type AugPick = (i64, Option<f64>, Option<f64>, u8);
+/// 强化条目紧凑格式：[id, 强度分, 选用率, 品质, OP.GG 梯度(0=S…5=E)]
+type AugPick = (i64, Option<f64>, Option<f64>, u8, u8);
 
 #[derive(Deserialize)]
 struct RecEntry {
@@ -110,6 +110,8 @@ pub struct AugmentView {
     pub icon: String,
     /// 1 = 白银, 2 = 黄金, 3 = 棱彩
     pub quality: u8,
+    /// OP.GG 梯度：0=S, 1=A, 2=B, 3=C, 4=D, 5=E；255 = 无数据
+    pub grade: u8,
     /// OP.GG 强度分（100 ≈ 该模式平均），无数据时为 null
     pub performance: Option<f64>,
     /// OP.GG 选用率（百分比）
@@ -253,6 +255,7 @@ fn augment_view(id: i64) -> Option<AugmentView> {
         name: a.name.clone(),
         icon: a.icon.clone(),
         quality: a.quality,
+        grade: 0,
         performance: None,
         popular: None,
         rank: 0,
@@ -494,16 +497,17 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
         .get(&champion_id.to_string())
         .ok_or_else(|| format!("{} 暂无统计数据（可能刚上线或样本不足）", champion.name))?;
 
-    // 已按 OP.GG performance 从高到低排好序，rank 直接取下标 + 1
+    // 已按 OP.GG 页面顺序（S→E 梯度、同梯度按选用率）排好序，rank 直接取下标 + 1
     let mut augments: Vec<AugmentView> = rec
         .augments
         .iter()
         .enumerate()
-        .filter_map(|(i, (id, performance, popular, quality))| {
+        .filter_map(|(i, (id, performance, popular, quality, grade))| {
             let mut view = augment_view(*id)?;
             view.rank = i + 1;
             view.performance = *performance;
             view.popular = *popular;
+            view.grade = *grade;
             if *quality > 0 {
                 view.quality = *quality;
             }
@@ -511,7 +515,7 @@ pub fn recommendation(champion_id: i32, mode: &str) -> Result<Recommendation, St
         })
         .collect();
 
-    // 档内排名：白银 / 黄金 / 棱彩各自按 OP.GG 强度从高到低编号
+    // 档内排名：白银 / 黄金 / 棱彩各自按 OP.GG 页面顺序编号
     // （列表本身已是强度降序，所以同品质按出现顺序递增即可）
     let mut totals: HashMap<u8, usize> = HashMap::new();
     for augment in &augments {

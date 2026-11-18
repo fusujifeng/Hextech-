@@ -132,15 +132,13 @@ async function fetchOpggAugments(alias) {
     return data
       .filter(
         (a) =>
-          // OP.GG 的 tier 0–4 是真实的 S/A/B/C/D 梯度（0 = S），
-          // tier 5 是「已移除 / 无排名 / 样本不足」的占位数据（performance 常为 170、popular≈0）。
-          // 之前只保留 1–4 把 S 档也过滤掉了，导致页面上的 S 强化全部消失。
-          Number(a.tier) >= 0 &&
-          Number(a.tier) <= 4 &&
+          // tier 0–5 对应 OP.GG 的 S/A/B/C/D/E 五档，全部保留；
+          // 只过滤没有名称、没有选取率的占位条目（performance 常为 170、popular≈0）
           Number(a.popular) > 0 &&
-          Number(a.performance) > 0,
+          Number(a.performance) > 0 &&
+          Boolean(a.name),
       )
-      // OP.GG 页面的顺序：先按梯度 S→D，同梯度内按选用率从高到低
+      // OP.GG 页面的顺序：先按梯度 S→E，同梯度内按选用率从高到低
       .sort(
         (a, b) =>
           Number(a.tier) - Number(b.tier) || Number(b.popular) - Number(a.popular),
@@ -330,11 +328,12 @@ async function main() {
         Number(p.performance.toFixed(2)),
         Number(p.popular.toFixed(2)),
         rarityToQuality(p.rarity) || Number(listById.get(String(p.id))?.quality) || 0,
+        Number(p.tier) || 0,
       ]);
     } else {
       augments = uniq((data.ra ?? []).slice(0, 6).map((row) => row[0]))
         .filter((augId) => iconOf(augId))
-        .map((augId) => [augId, null, null, Number(listById.get(String(augId))?.quality) || 0]);
+        .map((augId) => [augId, null, null, Number(listById.get(String(augId))?.quality) || 0, 255]);
     }
 
     [...start, ...boots, ...core, ...situational].forEach((x) => usedItemIds.add(String(x)));

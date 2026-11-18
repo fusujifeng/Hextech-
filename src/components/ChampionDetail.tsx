@@ -16,6 +16,22 @@ const QUALITY_RING: Record<number, string> = {
   2: "border-amber-300/55",
   3: "border-cyan-300/65",
 };
+const GRADE_LABEL: Record<number, string> = {
+  0: "S",
+  1: "A",
+  2: "B",
+  3: "C",
+  4: "D",
+  5: "E",
+};
+const GRADE_BADGE: Record<number, string> = {
+  0: "border-fuchsia-300/60 bg-fuchsia-400/15 text-fuchsia-200",
+  1: "border-emerald-300/50 bg-emerald-400/10 text-emerald-200",
+  2: "border-sky-300/45 bg-sky-400/10 text-sky-200",
+  3: "border-amber-300/45 bg-amber-400/10 text-amber-200",
+  4: "border-orange-300/40 bg-orange-400/10 text-orange-200",
+  5: "border-slate-300/30 bg-slate-300/8 text-slate-300/70",
+};
 
 function SectionLabel({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
@@ -255,6 +271,15 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
                 >
                   {QUALITY_LABEL[augment.quality] ?? "?"}
                 </span>
+                {augment.grade <= 5 && (
+                  <span
+                    className={`shrink-0 rounded-sm border px-1 py-[0.5px] text-[8.5px] font-semibold ${
+                      GRADE_BADGE[augment.grade] ?? "border-white/15 text-white/40"
+                    }`}
+                  >
+                    {GRADE_LABEL[augment.grade] ?? "?"}
+                  </span>
+                )}
               </div>
               <div className="truncate text-[9.5px] leading-[1.3] text-white/30">
                 {augment.desc || "—"}
