@@ -1,7 +1,7 @@
 {
   "name": "aram-mayhem-helper",
   "private": true,
-  "version": "2026.11.19",
+  "version": "2026.11.20",
   "type": "module",
   "scripts": {
     "dev": "vite",

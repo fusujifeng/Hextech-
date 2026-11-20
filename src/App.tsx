@@ -74,6 +74,8 @@ export default function App() {
   const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [augmentPicks, setAugmentPicks] = useState<AugmentView[] | null>(null);
+  const [augmentBusy, setAugmentBusy] = useState(false);
+  const [augmentError, setAugmentError] = useState<string | null>(null);
   const [champCards, setChampCards] = useState<ChampionRank[]>([]);
   const [cardsRefreshing, setCardsRefreshing] = useState(false);
 
@@ -201,6 +203,26 @@ export default function App() {
       .finally(() => setCardsRefreshing(false));
   }, []);
 
+  // 手动触发符文三选一：自动判定偶尔会漏，给一个随时可点的入口
+  const captureAugments = useCallback(() => {
+    setAugmentBusy(true);
+    setAugmentError(null);
+    api
+      .captureAugmentOptions()
+      .then((picks) => {
+        if (picks?.length) setAugmentPicks(picks);
+        else setAugmentError("没识别到三张符文卡：确认卡片在屏幕上，再点一次");
+      })
+      .catch(() => setAugmentError("识别失败，请重试"))
+      .finally(() => setAugmentBusy(false));
+  }, []);
+
+  useEffect(() => {
+    if (!augmentError) return;
+    const timer = window.setTimeout(() => setAugmentError(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [augmentError]);
+
   const liveMode = lcu && (lcu.mode === "mayhem" || lcu.mode === "aram") ? lcu.mode : null;
   const liveChampionId = liveMode ? lcu?.championId ?? null : null;
   const championId = previewId ?? liveChampionId;
@@ -325,6 +347,10 @@ export default function App() {
   // 选人阶段展示「当前英雄 + 备战席」的强度榜（大乱斗 / 海克斯大乱斗才有备战席）
   const inChampSelect =
     lcu?.phase === "ChampSelect" && (lcu.mode === "mayhem" || lcu.mode === "aram");
+  const inGame =
+    lcu?.phase === "InProgress" ||
+    lcu?.phase === "GameStart" ||
+    lcu?.phase === "Reconnect";
 
   return (
     <div className="relative flex h-full flex-col">
@@ -345,6 +371,20 @@ export default function App() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {inGame && lcu?.mode === "mayhem" && (
+            <button
+              onClick={captureAugments}
+              disabled={augmentBusy}
+              title="手动识别当前三张符文卡（不看等级/血量）"
+              className={`rounded-md border px-2 py-1 text-[10px] transition ${
+                augmentBusy
+                  ? "cursor-wait border-gold-400/40 bg-gold-400/10 text-gold-200/70"
+                  : "border-gold-400/30 text-gold-200/80 hover:border-gold-400/60 hover:bg-gold-400/10"
+              }`}
+            >
+              {augmentBusy ? "识别中…" : "符文三选一"}
+            </button>
+          )}
           <button
             onClick={togglePin}
             title={pinned ? "取消置顶" : "窗口置顶"}
@@ -379,6 +419,12 @@ export default function App() {
 
       {/* 主内容 */}
       <main className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
+        {augmentError && (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/8 px-2.5 py-2 text-[11px] text-amber-200/80">
+            {augmentError}
+          </div>
+        )}
+
         {inChampSelect && (
           <ChampSelectBoard
             championId={lcu?.championId ?? null}

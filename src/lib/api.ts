@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { ChampionBrief, ChampionRank, LcuState, Meta, Recommendation } from "./types";
+import type {
+  AugmentView,
+  ChampionBrief,
+  ChampionRank,
+  LcuState,
+  Meta,
+  Recommendation,
+} from "./types";
 
 export const getLcuState = () => invoke<LcuState>("get_lcu_state");
 
@@ -18,6 +25,10 @@ export const getChampionBoard = (ids: number[]) =>
 
 /** 重新截屏识别开局三张英雄牌（用户重抽卡牌后用） */
 export const refreshChampCards = () => invoke<ChampionRank[]>("refresh_champ_cards");
+
+/** 手动触发符文三选一识别（不看等级/血量） */
+export const captureAugmentOptions = () =>
+  invoke<AugmentView[] | null>("capture_augment_options");
 
 export const onLcuState = (cb: (state: LcuState) => void): Promise<UnlistenFn> =>
   listen<LcuState>("lcu-state", (event) => cb(event.payload));

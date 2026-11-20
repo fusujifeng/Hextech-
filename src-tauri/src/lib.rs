@@ -287,6 +287,50 @@ fn refresh_champ_cards(
     board
 }
 
+/// 手动触发「符文三选一」：不看等级/血量，随时截屏识别当前三张卡
+#[tauri::command]
+fn capture_augment_options(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Option<Vec<data::AugmentView>> {
+    let (champion_id, mode) = {
+        let rt = state.runtime.lock().unwrap();
+        (rt.state.champion_id, rt.state.mode.clone())
+    };
+    let champion_id = champion_id?;
+    let mode = if mode.is_empty() {
+        "mayhem".to_string()
+    } else {
+        mode
+    };
+
+    // 助手会挡住卡牌，先收起再截图
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    if let Some(ball) = app.get_webview_window("ball") {
+        let _ = ball.hide();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let ids = vision::ocr_screen()
+        .map(|text| data::find_augments_in_text(&text))
+        .unwrap_or_default();
+    let ids: Vec<i64> = ids.into_iter().take(3).collect();
+    let picks = data::augment_picks(champion_id, &ids, &mode);
+
+    show_main(&app);
+    if picks.len() >= 3 {
+        if let Ok(mut guard) = state.live.lock() {
+            guard.consume();
+        }
+        let _ = app.emit("augment-options", &picks);
+        Some(picks)
+    } else {
+        None
+    }
+}
+
 /// 悬浮球点击：如果刚好是符文等级且满血，截屏 OCR 出三张卡再展开
 #[tauri::command]
 fn expand_from_ball(
@@ -532,6 +576,7 @@ pub fn run() {
             get_pending_update,
             expand_from_ball,
             refresh_champ_cards,
+            capture_augment_options,
             quit_app
         ])
         .run(tauri::generate_context!())
