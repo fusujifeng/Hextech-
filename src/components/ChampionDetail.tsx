@@ -205,7 +205,7 @@ function RunesTab({ augments }: { augments: AugmentView[] }) {
 
   return (
     <div>
-      <div className="sticky -top-3 z-10 -mx-3.5 mb-2 space-y-2 bg-[#0a0f18]/95 px-3.5 pb-2 pt-1 backdrop-blur">
+      <div className="sticky top-[49px] z-10 -mx-3.5 mb-2 space-y-2 bg-[#0a0f18]/95 px-3.5 pb-2 pt-1 backdrop-blur">
         <div className="flex items-center gap-2">
           <input
             value={query}
@@ -320,27 +320,29 @@ export function ChampionDetail({ rec }: { rec: Recommendation }) {
   ];
 
   return (
-    <div className="animate-fade-up space-y-3">
+    <div className="space-y-3">
       <ChampionHeader rec={rec} />
 
-      <div className="flex gap-1 rounded-lg border border-white/8 bg-white/3 p-1">
-        {tabs.map(({ key, label, badge }) => {
-          const active = tab === key;
-          return (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[12px] transition ${
-                active
-                  ? "bg-gold-400/15 text-gold-200 shadow-[inset_0_-1px_0_rgba(200,170,110,0.6)]"
-                  : "text-white/45 hover:text-white/70"
-              }`}
-            >
-              {label}
-              {badge ? <span className="text-[9.5px] opacity-60">{badge}</span> : null}
-            </button>
-          );
-        })}
+      <div className="sticky top-0 z-20 -mx-3.5 border-b border-white/8 bg-[#0a0f18]/95 px-3.5 py-1.5 backdrop-blur">
+        <div className="flex gap-1 rounded-lg border border-white/8 bg-white/3 p-1">
+          {tabs.map(({ key, label, badge }) => {
+            const active = tab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[12px] transition ${
+                  active
+                    ? "bg-gold-400/15 text-gold-200 shadow-[inset_0_-1px_0_rgba(200,170,110,0.6)]"
+                    : "text-white/45 hover:text-white/70"
+                }`}
+              >
+                {label}
+                {badge ? <span className="text-[9.5px] opacity-60">{badge}</span> : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {tab === "overview" && <OverviewTab rec={rec} onOpenRunes={() => setTab("runes")} />}
