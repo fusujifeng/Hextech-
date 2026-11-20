@@ -153,14 +153,22 @@ Rust 侧会过滤掉与英雄名完全相同的外号，避免搜索结果里出
    公钥已经写在 `tauri.conf.json` 的 `plugins.updater.pubkey`，**私钥与密码绝不入库**
    （已在 `.gitignore` 中忽略 `src-tauri/keys/`）。
 
-3. 打 tag 发布：
+3. 生成版本号并打 tag：
 
    ```powershell
-   # 先把 src-tauri/tauri.conf.json 和 src-tauri/Cargo.toml 的 version 改成新版本号
-   # latest.json 里的 version 取自 tauri.conf.json，不递增就不会提示更新
-   git tag v0.1.0
-   git push origin v0.1.0
+   node scripts/next-version.mjs --dry-run   # 先看下一版版本号
+   node scripts/next-version.mjs             # 写入 package.json / tauri.conf.json / Cargo.toml / Cargo.lock
+   git add -A
+   git commit -m "release: <版本号>"
+   git tag v<版本号>
+   git push origin master v<版本号>
    ```
+
+   版本号规则：当天第一个包 `2026.11.20`，第二个包 `2026.11.20-2`，第三个包 `2026.11.20-3`，以此类推。
+   `latest.json` 里的 version 取自 `tauri.conf.json`，不递增就不会提示更新。
+
+   > 注意：semver 里 `2026.11.20-2` 低于 `2026.11.20`，已装基础版的用户不会收到 `-2` 的自动更新提示；
+   > 同日多包目前需要手动安装，或从当天第一包就用 `-1` 起（需要的话可以改规则）。
 
 `.github/workflows/release.yml` 会构建 NSIS 安装包、签名、生成 `latest.json` 并创建 Release。
 
