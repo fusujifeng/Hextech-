@@ -20,6 +20,11 @@ pub fn ocr_screen() -> Option<String> {
     let script = dir.join("ocr-screen.ps1");
     std::fs::write(&script, OCR_SCRIPT).ok()?;
 
+    let txt = dir.join("ocr-last.txt");
+    let png = dir.join("ocr-last.png");
+    let _ = std::fs::remove_file(&txt);
+    let _ = std::fs::remove_file(&png);
+
     let output = Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
         .args([
@@ -30,14 +35,19 @@ pub fn ocr_screen() -> Option<String> {
             "-File",
         ])
         .arg(&script)
+        .arg("-OutPath")
+        .arg(&txt)
+        .arg("-PngPath")
+        .arg(&png)
         .output()
         .ok()?;
 
-    if !output.status.success() {
-        return None;
+    // 优先读 UTF-8 文件：PowerShell 重定向 stdout 时编码不一定是 UTF-8
+    let mut text = std::fs::read_to_string(&txt).unwrap_or_default();
+    if text.trim().is_empty() {
+        text = String::from_utf8(output.stdout).unwrap_or_default();
     }
 
-    let text = String::from_utf8(output.stdout).ok()?;
     let text = text.trim().to_string();
     if text.is_empty() {
         None

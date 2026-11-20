@@ -1,3 +1,8 @@
+param(
+  [string]$OutPath = "",
+  [string]$PngPath = ""
+)
+
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -28,6 +33,11 @@ $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
 $graphics.Dispose()
 
+# Save a copy of the screenshot for diagnosing failed recognition.
+if ($PngPath) {
+  $bitmap.Save($PngPath, [System.Drawing.Imaging.ImageFormat]::Png)
+}
+
 $rect = New-Object System.Drawing.Rectangle(0, 0, $bounds.Width, $bounds.Height)
 $data = $bitmap.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
 $width = $data.Width
@@ -54,5 +64,10 @@ $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
 $task = $asTask.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke($null, @($operation))
 $task.Wait(20000) | Out-Null
 $result = $task.Result
+
+# Write UTF-8 file instead of relying on redirected stdout encoding.
+if ($OutPath) {
+  [System.IO.File]::WriteAllText($OutPath, $result.Text, (New-Object System.Text.UTF8Encoding($false)))
+}
 
 [Console]::Out.Write($result.Text)
