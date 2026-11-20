@@ -253,40 +253,6 @@ pub(crate) fn expand_main(app: &tauri::AppHandle) {
     }
 }
 
-/// 手动刷新开局三张英雄牌：收起助手 → 截屏 OCR → 展开并返回牌面排名
-#[tauri::command]
-fn refresh_champ_cards(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Vec<data::ChampionRank> {
-    let can_detect = state
-        .runtime
-        .lock()
-        .map(|rt| rt.state.phase == "ChampSelect" && rt.state.mode == "mayhem")
-        .unwrap_or(false);
-    if !can_detect {
-        return Vec::new();
-    }
-
-    // 助手会挡住牌面，先收起再截图
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.hide();
-    }
-    if let Some(ball) = app.get_webview_window("ball") {
-        let _ = ball.hide();
-    }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-
-    let ids = vision::ocr_screen()
-        .map(|text| data::find_champions_in_text(&text))
-        .unwrap_or_default();
-    let ids: Vec<i32> = ids.into_iter().take(3).map(|id| id as i32).collect();
-    let board = data::champion_board(&ids);
-
-    show_main(&app);
-    board
-}
-
 /// 手动触发「符文三选一」：不看等级/血量，随时截屏识别当前三张卡
 #[tauri::command]
 fn capture_augment_options(
@@ -575,7 +541,6 @@ pub fn run() {
             get_champion_board,
             get_pending_update,
             expand_from_ball,
-            refresh_champ_cards,
             capture_augment_options,
             quit_app
         ])

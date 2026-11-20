@@ -13,7 +13,7 @@ use league_link::{lcu_get, Credentials};
 use serde::Serialize;
 use serde_json::Value;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 use crate::data;
 
@@ -399,36 +399,11 @@ pub async fn run(app: AppHandle, rt: Arc<Mutex<Runtime>>) {
             }
         }
 
-        // 进入选人阶段：海克斯模式先等英雄牌出现，OCR 出开局三张英雄卡，再展开主窗口
-        // （展开后助手会挡住客户端卡片，所以必须在展开前截屏）
+        // 进入选人阶段时把主窗口自动展开（仅海克斯 / 极地大乱斗，不抢焦点）
         let in_champ_select =
             next.phase == "ChampSelect" && (next.mode == "mayhem" || next.mode == "aram");
         if in_champ_select && !was_champ_select {
-            if next.mode == "mayhem" {
-                let handle = app.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    // 先收起助手，保证英雄牌不被挡住
-                    if let Some(win) = handle.get_webview_window("main") {
-                        let _ = win.hide();
-                    }
-                    if let Some(ball) = handle.get_webview_window("ball") {
-                        let _ = ball.show();
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(1800));
-                    if let Some(text) = crate::vision::ocr_screen() {
-                        let ids = crate::data::find_champions_in_text(&text);
-                        if ids.len() >= 2 {
-                            let ids: Vec<i32> = ids.iter().take(3).map(|id| *id as i32).collect();
-                            let board = crate::data::champion_board(&ids);
-                            let _ = handle.emit("champ-select-cards", &board);
-                        }
-                    }
-                    crate::expand_main(&handle);
-                });
-            } else {
-                crate::expand_main(&app);
-            }
+            crate::expand_main(&app);
         }
         was_champ_select = in_champ_select;
 

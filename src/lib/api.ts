@@ -23,9 +23,6 @@ export const getMeta = () => invoke<Meta>("get_meta");
 export const getChampionBoard = (ids: number[]) =>
   invoke<ChampionRank[]>("get_champion_board", { ids });
 
-/** 重新截屏识别开局三张英雄牌（用户重抽卡牌后用） */
-export const refreshChampCards = () => invoke<ChampionRank[]>("refresh_champ_cards");
-
 /** 手动触发符文三选一识别（不看等级/血量） */
 export const captureAugmentOptions = () =>
   invoke<AugmentView[] | null>("capture_augment_options");

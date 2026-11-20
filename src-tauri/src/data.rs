@@ -430,32 +430,6 @@ pub fn champion_id_by_alias_or_name(key: &str) -> Option<i32> {
     None
 }
 
-/// 从 OCR 文本里找出英雄中文名（开局三选一英雄牌），按名字长度降序。
-pub fn find_champions_in_text(text: &str) -> Vec<i64> {
-    let haystack = normalize_text(text);
-    let mut hits: Vec<(usize, i64)> = Vec::new();
-
-    for (id, meta) in RESG.champions.iter() {
-        // 英雄牌上可能写名字（亚索）也可能写称号（疾风剑豪），两种都试
-        let mut best = 0;
-        for candidate in [&meta.name, &meta.title] {
-            let text = normalize_text(candidate);
-            let len = text.chars().count();
-            if len >= 2 && haystack.contains(&text) {
-                best = best.max(len);
-            }
-        }
-        if best > 0 {
-            if let Ok(id) = id.parse::<i64>() {
-                hits.push((best, id));
-            }
-        }
-    }
-
-    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    hits.into_iter().map(|(_, id)| id).collect()
-}
-
 /// 给 OCR 命中的符文集齐当前英雄的档内排名，并按档内名次排序。
 pub fn augment_picks(champion_id: i32, ids: &[i64], mode: &str) -> Vec<AugmentView> {
     let Ok(rec) = recommendation(champion_id, mode) else {
@@ -692,17 +666,6 @@ mod tests {
             Some(4)
         );
         assert_eq!(champion_id_by_alias_or_name("不存在"), None);
-    }
-
-    #[test]
-    fn finds_champions_in_spaced_ocr_text() {
-        // OCR 会在每个汉字之间插空格
-        let ids = find_champions_in_text("xxx 金 克 丝 yyy 盖 伦 zzz");
-        assert!(ids.contains(&222), "应识别出金克丝, got {ids:?}");
-
-        let board = champion_board(&[222, 86]);
-        assert_eq!(board.len(), 2);
-        assert!(board.iter().all(|c| c.rank >= 1));
     }
 
     #[test]
