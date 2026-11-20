@@ -519,6 +519,15 @@ export default function App() {
           setPickerOpen(false);
         }}
       />
+
+      {augmentBusy && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#0a0f18]/55 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-lg border border-gold-400/30 bg-[#0c131f] px-3 py-2 text-[12px] text-gold-200 shadow-xl">
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gold-400/30 border-t-gold-300" />
+            正在识别三张符文卡…
+          </div>
+        </div>
+      )}
     </div>
   );
 }

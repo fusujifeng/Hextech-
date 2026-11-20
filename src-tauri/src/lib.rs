@@ -270,12 +270,15 @@ fn capture_augment_options(
         mode
     };
 
-    // 助手会挡住卡牌，先收起再截图
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.hide();
-    }
-    if let Some(ball) = app.get_webview_window("ball") {
-        let _ = ball.hide();
+    // 助手不关闭：先滑到当前屏幕最左侧，露出中间三张卡，识别完再回原位
+    let win = app.get_webview_window("main");
+    let restore = win.as_ref().and_then(|w| w.outer_position().ok());
+    if let Some(w) = &win {
+        if let Ok(Some(monitor)) = w.current_monitor() {
+            let x = monitor.position().x;
+            let y = restore.map(|p| p.y).unwrap_or(0);
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
     }
     std::thread::sleep(std::time::Duration::from_millis(300));
 
@@ -284,6 +287,10 @@ fn capture_augment_options(
         .unwrap_or_default();
     let ids: Vec<i64> = ids.into_iter().take(3).collect();
     let picks = data::augment_picks(champion_id, &ids, &mode);
+
+    if let (Some(w), Some(pos)) = (&win, restore) {
+        let _ = w.set_position(pos);
+    }
 
     show_main(&app);
     if picks.len() >= 3 {
