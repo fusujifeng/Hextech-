@@ -518,11 +518,20 @@ pub fn run() {
             // 关闭主窗口 = 收进悬浮球，不退出程序
             if let Some(main) = app.get_webview_window("main") {
                 let app_handle = app.handle().clone();
-                main.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let main_win = main.clone();
+                main.on_window_event(move |event| match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
                         hide_to_ball(&app_handle);
                     }
+                    // 点最小化也收成悬浮球，而不是缩到任务栏
+                    tauri::WindowEvent::Resized(_) => {
+                        if main_win.is_minimized().unwrap_or(false) {
+                            let _ = main_win.unminimize();
+                            hide_to_ball(&app_handle);
+                        }
+                    }
+                    _ => {}
                 });
             }
 
