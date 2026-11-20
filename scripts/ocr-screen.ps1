@@ -27,6 +27,33 @@ if (-not $engine) {
   exit 1
 }
 
+$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+  $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod
+})[0]
+
+function Invoke-OcrText($bmp) {
+  $rect = New-Object System.Drawing.Rectangle(0, 0, $bmp.Width, $bmp.Height)
+  $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $width = $data.Width
+  $height = $data.Height
+  $stride = $data.Stride
+  $bytes = New-Object byte[] ($stride * $height)
+  [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $bytes, 0, $bytes.Length)
+  $bmp.UnlockBits($data)
+
+  $buffer = [System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::AsBuffer($bytes)
+  $sb = [Windows.Graphics.Imaging.SoftwareBitmap]::CreateCopyFromBuffer(
+    $buffer,
+    [Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,
+    [int]$width,
+    [int]$height
+  )
+  $op = $engine.RecognizeAsync($sb)
+  $task = $asTask.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke($null, @($op))
+  $task.Wait(20000) | Out-Null
+  return $task.Result.Text
+}
+
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -38,36 +65,35 @@ if ($PngPath) {
   $bitmap.Save($PngPath, [System.Drawing.Imaging.ImageFormat]::Png)
 }
 
-$rect = New-Object System.Drawing.Rectangle(0, 0, $bounds.Width, $bounds.Height)
-$data = $bitmap.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-$width = $data.Width
-$height = $data.Height
-$stride = $data.Stride
-$bytes = New-Object byte[] ($stride * $height)
-[System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $bytes, 0, $bytes.Length)
-$bitmap.UnlockBits($data)
-$bitmap.Dispose()
-
-# Format32bppArgb is BGRA in memory, which is what SoftwareBitmap expects.
-$buffer = [System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::AsBuffer($bytes)
-$softwareBitmap = [Windows.Graphics.Imaging.SoftwareBitmap]::CreateCopyFromBuffer(
-  $buffer,
-  [Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,
-  [int]$width,
-  [int]$height
+# The three augment cards are in the center. Windows OCR misses the stylized
+# card font on a 4K full-screen image, but reads it when the card area is
+# cropped and scaled 2x. Fall back to the full screen if the crop is empty.
+$cx = [int]($bitmap.Width * 0.22)
+$cy = [int]($bitmap.Height * 0.16)
+$cw = [int]($bitmap.Width * 0.56)
+$ch = [int]($bitmap.Height * 0.51)
+$crop = New-Object System.Drawing.Bitmap([int]($cw * 2), [int]($ch * 2))
+$g2 = [System.Drawing.Graphics]::FromImage($crop)
+$g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+$g2.DrawImage(
+  $bitmap,
+  (New-Object System.Drawing.Rectangle(0, 0, $crop.Width, $crop.Height)),
+  (New-Object System.Drawing.Rectangle($cx, $cy, $cw, $ch)),
+  [System.Drawing.GraphicsUnit]::Pixel
 )
+$g2.Dispose()
 
-$operation = $engine.RecognizeAsync($softwareBitmap)
-$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-  $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod
-})[0]
-$task = $asTask.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke($null, @($operation))
-$task.Wait(20000) | Out-Null
-$result = $task.Result
+$text = Invoke-OcrText $crop
+$crop.Dispose()
+
+if (-not $text -or $text.Trim().Length -eq 0) {
+  $text = Invoke-OcrText $bitmap
+}
+$bitmap.Dispose()
 
 # Write UTF-8 file instead of relying on redirected stdout encoding.
 if ($OutPath) {
-  [System.IO.File]::WriteAllText($OutPath, $result.Text, (New-Object System.Text.UTF8Encoding($false)))
+  [System.IO.File]::WriteAllText($OutPath, $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-[Console]::Out.Write($result.Text)
+[Console]::Out.Write($text)
