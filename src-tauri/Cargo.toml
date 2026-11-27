@@ -1,6 +1,6 @@
 [package]
 name = "aram-mayhem-helper"
-version = "2026.11.20-3"
+version = "2026.11.27"
 description = "英雄联盟海克斯大乱斗出装助手"
 authors = ["chenhang"]
 edition = "2024"
