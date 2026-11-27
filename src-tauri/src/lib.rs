@@ -237,6 +237,8 @@ fn show_main(app: &tauri::AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.show();
         let _ = main.unminimize();
+        // 默认置顶，保证点悬浮球展开时不会被全屏/无边框游戏压在后面
+        let _ = main.set_always_on_top(true);
         force_foreground(&main);
     }
 }
